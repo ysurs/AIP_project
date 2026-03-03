@@ -4,24 +4,41 @@ from scipy.signal import convolve2d
 from PIL import Image
 import os
 from scipy.ndimage import gaussian_filter
+import math
 
 
 def get_gabor_kernel(sigma, theta, Lambda, gamma):
-    """Generates a zero-mean Gabor kernel with dynamic sizing."""
-    # Dynamic size (6*sigma) ensures the Gaussian isn't cut off
+    """Generates a zero-mean Gabor kernel (returns numpy ndarray)."""
+    
     half_size = int(3 * sigma)
-    y, x = np.mgrid[-half_size:half_size+1, -half_size:half_size+1]
+    size = 2 * half_size + 1
     
-    # Rotation math
-    x_theta = x * np.cos(theta) + y * np.sin(theta)
-    y_theta = -x * np.sin(theta) + y * np.cos(theta)
+    kernel = np.zeros((size, size), dtype=float)
     
-    gb = np.exp(-.5 * (x_theta**2 / sigma**2 + (gamma * y_theta)**2 / sigma**2)) * \
-         np.cos(2 * np.pi / Lambda * x_theta)
+    for i, y in enumerate(range(-half_size, half_size + 1)):
+        for j, x in enumerate(range(-half_size, half_size + 1)):
+            
+            # Rotate coordinates
+            x_theta = x * math.cos(theta) + y * math.sin(theta)
+            y_theta = -x * math.sin(theta) + y * math.cos(theta)
+            
+            # Gaussian envelope
+            gaussian = math.exp(
+                -0.5 * (
+                    (x_theta ** 2) / (sigma ** 2) +
+                    (gamma ** 2 * y_theta ** 2) / (sigma ** 2)
+                )
+            )
+            
+            # Cosine carrier
+            sinusoid = math.cos(2 * math.pi * x_theta / Lambda)
+            
+            kernel[i, j] = gaussian * sinusoid
     
-    # CRITICAL: Subtract mean to make the filter zero-mean.
-    # This prevents the filter from responding to solid white/black areas.
-    return gb - gb.mean()
+    # Subtract mean (zero-mean property)
+    kernel -= kernel.mean()
+    
+    return np.array(kernel)
 
 def local_contrast_normalization(img, sigma=10):
     """Normalizes lighting and enhances local textures."""
