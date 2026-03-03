@@ -31,7 +31,7 @@ def local_contrast_normalization(img, sigma=10):
     local_var = np.sqrt(gaussian_filter(centered**2, sigma))
     return centered / (local_var + 0.01)
 
-def compute_gist(image_path, scales=5, orientations=6, blocks=4):
+def compute_gist(image_path, mask_path=None, scales=5, orientations=6, blocks=4):
     # 1. Load and Preprocess
     # If path is a string, open it; if it's already an array, use it directly
     if isinstance(image_path, str):
@@ -40,6 +40,19 @@ def compute_gist(image_path, scales=5, orientations=6, blocks=4):
         img_array = np.array(img) / 255.0
     else:
         img_array = image_path 
+
+    # Apply mask if provided
+    if mask_path and os.path.exists(mask_path):
+        mask_img = Image.open(mask_path).convert('L')
+        mask_img = mask_img.resize((128, 128), Image.Resampling.NEAREST)
+        mask_array = np.array(mask_img) / 255.0
+        
+        # Calculate mean of the unmasked area
+        unmasked_pixels = img_array[mask_array < 0.5]
+        mean_val = np.mean(unmasked_pixels) if len(unmasked_pixels) > 0 else 0.5
+        
+        # Fill the hole with the mean value to prevent false edge responses
+        img_array[mask_array > 0.5] = mean_val
 
     img_array = local_contrast_normalization(img_array)
     
@@ -102,6 +115,7 @@ def visualize_gist(gist_data, scales, orientations):
     cax = fig.add_subplot(gs[0:scales, -1])
     plt.colorbar(im, cax=cax, label='Activation (Energy)')
     plt.tight_layout(rect=[0.08, 0.08, 0.95, 0.95])
+    plt.savefig("gist_visualization.png", dpi=300, bbox_inches='tight', facecolor=fig.get_facecolor())
     plt.show()
     
 def generate_vertical_split(size=128):
@@ -129,9 +143,9 @@ if __name__ == '__main__':
         # TEST: Generate a pure white image
         print("No image provided. Processing white image...")
         #white_img = np.ones((128, 128))
-        #test_img = generate_vertical_split(128)
-        test_img = np.zeros((128, 128))
-        test_img[64:, :] = 1.0
+        test_img = generate_vertical_split(128)
+        #test_img = np.zeros((128, 128))
+        #test_img[64:, :] = 1.0
         # Create the PIL image object first, then call .save() on it
         Image.fromarray((test_img * 255).astype(np.uint8)).save("horiz_split.png")
         data = compute_gist(test_img)

@@ -59,12 +59,25 @@ def finish_drawing(event):
     if os.path.exists(temp_pgm):
         os.remove(temp_pgm)
         
-    # Close GUI and exit
+    # Close GUI
     root.destroy()
+    
+    print("\\nComputing GIST descriptor on the image...")
+    script = f"""
+import sys
+from test_image_creation import compute_gist, visualize_gist
+
+try:
+    data = compute_gist('{image_path}', '{OUTPUT_FILE}')
+    visualize_gist(data, 5, 6)
+except Exception as e:
+    print(f"Error computing GIST: {{e}}")
+"""
+    subprocess.run([sys.executable, "-c", script])
     sys.exit(0)
 
 def main():
-    global root, canvas, WIDTH, HEIGHT, mask, bg_img
+    global root, canvas, WIDTH, HEIGHT, mask, bg_img, image_path
     root = tk.Tk()
     root.withdraw() # Hide initially so we just show the file dialog
     
@@ -113,7 +126,7 @@ def main():
     root.bind("q", finish_drawing)
     root.bind("Q", finish_drawing)
     
-    print("Application started.")
+    print(f"Application started.")
     print(" - Click and Drag mouse to draw the mask.")
     print(" - Press the 'q' key on your keyboard to finish and save.")
     
