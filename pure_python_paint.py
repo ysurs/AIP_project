@@ -68,7 +68,7 @@ import sys
 from test_image_creation import compute_gist, visualize_gist
 
 try:
-    data = compute_gist('{image_path}', '{OUTPUT_FILE}')
+    data, weights = compute_gist('{image_path}', '{OUTPUT_FILE}')
     visualize_gist(data, 5, 6)
 except Exception as e:
     print(f"Error computing GIST: {{e}}")
