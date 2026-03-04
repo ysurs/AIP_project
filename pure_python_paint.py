@@ -62,16 +62,18 @@ def finish_drawing(event):
     # Close GUI
     root.destroy()
     
-    print("\\nComputing GIST descriptor on the image...")
+    print("\\nComputing GIST and Color descriptors on the image...")
     script = f"""
 import sys
-from test_image_creation import compute_gist, visualize_gist
+from test_image_creation import compute_gist, visualize_gist, compute_color_feature
 
 try:
     data, weights = compute_gist('{image_path}', '{OUTPUT_FILE}')
+    color_features = compute_color_feature('{image_path}')
+    print("GIST and color features computed successfully.")
     visualize_gist(data, 5, 6)
 except Exception as e:
-    print(f"Error computing GIST: {{e}}")
+    print(f"Error computing features: {{e}}")
 """
     subprocess.run([sys.executable, "-c", script])
     sys.exit(0)

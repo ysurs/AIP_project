@@ -134,6 +134,65 @@ def local_contrast_normalization(img, sigma=10):
             
     return np.array(result)
 
+def compute_color_feature(image_path, blocks=4):
+    """
+    Computes the color feature by resizing the image to `blocks x blocks` 
+    and converting to L*a*b* color space.
+    """
+    if isinstance(image_path, str):
+        img = Image.open(image_path).convert('RGB')
+    else:
+        # Assume it's a NumPy array
+        if len(image_path.shape) == 2:
+            # Duplicate grayscale into 3 channels
+            image_path = np.stack((image_path,)*3, axis=-1)
+        
+        # Ensure it's in uint8 format for PIL
+        if image_path.dtype != np.uint8:
+            if np.max(image_path) <= 1.0:
+                img_uint8 = (image_path * 255).astype(np.uint8)
+            else:
+                img_uint8 = image_path.astype(np.uint8)
+        else:
+            img_uint8 = image_path
+            
+        img = Image.fromarray(img_uint8)
+        
+    # Resize to exactly 4x4
+    img_small = img.resize((blocks, blocks), Image.Resampling.LANCZOS)
+    img_small_array = np.array(img_small) / 255.0
+    
+    # NumPy RGB to LAB conversion (Standard D65 Illuminant)
+    def rgb_to_xyz(rgb):
+        mask = rgb > 0.04045
+        rgb[mask] = ((rgb[mask] + 0.055) / 1.055) ** 2.4
+        rgb[~mask] = rgb[~mask] / 12.92
+        rgb *= 100
+        
+        x = rgb[:,:,0]*0.4124 + rgb[:,:,1]*0.3576 + rgb[:,:,2]*0.1805
+        y = rgb[:,:,0]*0.2126 + rgb[:,:,1]*0.7152 + rgb[:,:,2]*0.0722
+        z = rgb[:,:,0]*0.0193 + rgb[:,:,1]*0.1192 + rgb[:,:,2]*0.9505
+        return np.stack([x, y, z], axis=-1)
+        
+    def xyz_to_lab(xyz):
+        xyz_ref_white = np.array([95.047, 100.0, 108.883])
+        xyz_normalized = xyz / xyz_ref_white
+        
+        mask = xyz_normalized > 0.008856
+        xyz_normalized[mask] = np.cbrt(xyz_normalized[mask])
+        xyz_normalized[~mask] = (7.787 * xyz_normalized[~mask]) + (16 / 116)
+        
+        L = (116 * xyz_normalized[:,:,1]) - 16
+        a = 500 * (xyz_normalized[:,:,0] - xyz_normalized[:,:,1])
+        b = 200 * (xyz_normalized[:,:,1] - xyz_normalized[:,:,2])
+        return np.stack([L, a, b], axis=-1)
+        
+    xyz = rgb_to_xyz(img_small_array)
+    lab = xyz_to_lab(xyz)
+    
+    return lab
+
+
 def compute_gist(image_path, mask_path=None, scales=5, orientations=6, blocks=4):
     """
     Computes Gist descriptor and spatial weights based on valid pixels.
@@ -263,6 +322,45 @@ def generate_vertical_split(size=128):
     
     return image_array
 
+def test_color_feature():
+    print("Running test case: Texture vs Color.")
+    size = 128
+    # 1. Create two identical structural images (vertical split)
+    img_blue = np.zeros((size, size, 3), dtype=np.float32)
+    img_red = np.zeros((size, size, 3), dtype=np.float32)
+    
+    # Blue half / Red half
+    img_blue[:, :size//2, 2] = 1.0  
+    img_red[:, :size//2, 0] = 1.0   
+    
+    # White halves
+    img_blue[:, size//2:] = 1.0
+    img_red[:, size//2:] = 1.0
+    
+    # Convert to Grayscale for GIST
+    img_blue_gray = np.mean(img_blue, axis=-1)
+    img_red_gray = np.mean(img_red, axis=-1)
+
+    # 2. Compute GIST
+    gist_blue, _ = compute_gist(img_blue_gray)
+    gist_red, _ = compute_gist(img_red_gray)
+
+    # 3. Compute Color Features
+    color_blue = compute_color_feature(img_blue)
+    color_red = compute_color_feature(img_red)
+
+    # Assertions to prove the concept
+    gist_diff = np.sum(np.abs(gist_blue - gist_red))
+    color_diff = np.sum(np.abs(color_blue - color_red))
+
+    print(f"GIST Descriptor Difference (should be ~0.0): {gist_diff:.4f}")
+    print(f"L*a*b* Color Feature Difference (should be large): {color_diff:.4f}")
+    
+    if gist_diff < 0.1 and color_diff > 10.0:
+        print("SUCCESS! The system successfully distinguishes identical textures by color.\n")
+    else:
+        print("FAILED.\n")
+
 if __name__ == '__main__':
     import sys
     
@@ -271,6 +369,8 @@ if __name__ == '__main__':
         print(f"Processing image: {image_path}...")
         data, weights = compute_gist(image_path)
     else:
+        test_color_feature()
+        
         # TEST: Generate a pure white image
         print("No image provided. Processing white image...")
         #white_img = np.ones((128, 128))
