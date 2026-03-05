@@ -266,7 +266,15 @@ def compute_gist(image_path, mask_path=None, scales=5, orientations=6, blocks=4)
                 for bw in range(blocks):
                     block = energy[bh*h//blocks:(bh+1)*h//blocks, 
                                    bw*w//blocks:(bw+1)*w//blocks]
-                    gist_data[s, o, bh, bw] = np.mean(block)
+                    if mask_path and os.path.exists(mask_path):
+                        valid_block = valid_mask[bh*h//blocks:(bh+1)*h//blocks, 
+                                                 bw*w//blocks:(bw+1)*w//blocks]
+                        if np.sum(valid_block) > 0:
+                            gist_data[s, o, bh, bw] = np.sum(block[valid_block]) / np.sum(valid_block)
+                        else:
+                            gist_data[s, o, bh, bw] = 0.0
+                    else:
+                        gist_data[s, o, bh, bw] = np.mean(block)
     
     # Returns BOTH the descriptor and the weights for proper matching
     return gist_data, gist_weights
