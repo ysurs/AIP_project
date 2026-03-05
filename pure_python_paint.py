@@ -62,18 +62,18 @@ def finish_drawing(event):
     # Close GUI
     root.destroy()
     
-    print("\\nComputing GIST and Color descriptors on the image...")
+    print("\\nFinding matching scenes using GIST and Color descriptors...")
     script = f"""
 import sys
-from test_image_creation import compute_gist, visualize_gist, compute_color_feature
+from match_scenes import find_k_best_matches
 
 try:
-    data, weights = compute_gist('{image_path}', '{OUTPUT_FILE}')
-    color_features = compute_color_feature('{image_path}')
-    print("GIST and color features computed successfully.")
-    visualize_gist(data, 5, 6)
+    matches = find_k_best_matches('{image_path}', '{OUTPUT_FILE}', 'beaches', k=12)
+    print("\\nTop 12 matches:")
+    for rank, (score, path, fname) in enumerate(matches, 1):
+        print(f"{{rank}}. {{fname}} (Score: {{score:.4f}})")
 except Exception as e:
-    print(f"Error computing features: {{e}}")
+    print(f"Error finding matches: {{e}}")
 """
     subprocess.run([sys.executable, "-c", script])
     sys.exit(0)
