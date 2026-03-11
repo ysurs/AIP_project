@@ -389,4 +389,5 @@ if __name__ == '__main__':
         Image.fromarray((test_img * 255).astype(np.uint8)).save("horiz_split.png")
         data, weights = compute_gist(test_img)
     
+    print(data.shape)
     visualize_gist(data, 5, 6)

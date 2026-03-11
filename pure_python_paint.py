@@ -65,14 +65,76 @@ def finish_drawing(event):
     print("\\nFinding matching scenes using GIST and Color descriptors...")
     script = f"""
 import sys
+import cv2
+import numpy as np
 from match_scenes import find_k_best_matches
+from local_context_matching import local_context_matching
+from poisson_blending import blend_match
 
 try:
+    print("\\nFinding global matches...")
     matches = find_k_best_matches('{image_path}', '{OUTPUT_FILE}', 'beaches', k=12)
-    print("\\nTop 12 matches:")
+    print("\\nTop 12 global matches:")
+    
+    match_img_bgr_list = []
+    valid_matches = []
+    
     for rank, (score, path, fname) in enumerate(matches, 1):
         print(f"{{rank}}. {{fname}} (Score: {{score:.4f}})")
+        img = cv2.imread(path)
+        if img is not None:
+            match_img_bgr_list.append(img)
+            valid_matches.append(fname)
+            
+    print("\\nRunning local context matching on top 12 matches...")
+    query_img = cv2.imread('{image_path}')
+    mask_img = cv2.imread('{OUTPUT_FILE}', cv2.IMREAD_GRAYSCALE)
+    if mask_img is None or query_img is None:
+        raise ValueError("Could not read query image or generated mask for local context matching.")
+        
+    # Resize the GUI mask to match the original high-resolution query image
+    h_q, w_q = query_img.shape[:2]
+    mask_img = cv2.resize(mask_img, (w_q, h_q), interpolation=cv2.INTER_NEAREST)
+        
+    mask_bool = (mask_img > 127).astype(np.uint8)
+    
+    local_results = local_context_matching(query_img, mask_bool, match_img_bgr_list[1:]) # Skip the top match which is often the same image
+    
+    if local_results:
+        # Sort by local context score
+        local_results.sort(key=lambda x: x['best_score'])
+        print("\\nTop Matches after Local Context Verification:")
+        for rank, res in enumerate(local_results, 1):
+            # +1 because we skipped index 0 in match_img_bgr_list
+            actual_idx = res['match_idx'] + 1 
+            fname = valid_matches[actual_idx]
+            score = res['best_score']
+            tex_score = res['texture_ssd']
+            scale, ty, tx = res['best_placement']
+            print(f"{{rank}}. {{fname}} (Local Score: {{score:.4f}}, Texture SSD: {{tex_score:.4f}}, Placement: scale={{scale}}, y={{ty}}, x={{tx}})")
+            
+        print("\\nPerforming Poisson Blending on Top 3 matches...")
+        for i in range(min(3, len(local_results))):
+            res = local_results[i]
+            actual_idx = res['match_idx'] + 1
+            placement = res['best_placement']
+            fname = valid_matches[actual_idx]
+            match_img = match_img_bgr_list[actual_idx]
+            
+            # Poisson blend
+            blended_img = blend_match(query_img, mask_bool, match_img, placement)
+            
+            # Save the result
+            out_filename = f"result_rank{{i+1}}_{{fname}}"
+            cv2.imwrite(out_filename, blended_img)
+            print(f"Saved seamlessly cloned result to: {{out_filename}}")
+            
+    else:
+        print("\\nNo local context matches found (mask might be empty).")
+        
 except Exception as e:
+    import traceback
+    traceback.print_exc()
     print(f"Error finding matches: {{e}}")
 """
     subprocess.run([sys.executable, "-c", script])
