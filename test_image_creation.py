@@ -122,6 +122,7 @@ def local_contrast_normalization(img, sigma=10):
     # Calculate local variance (blur of the squared differences)
     local_var_sq = pure_python_gaussian_blur(centered_sq, sigma)
     
+    threshold=0.02
     # Final normalization
     result = [[0.0] * cols for _ in range(rows)]
     for r in range(rows):
@@ -130,7 +131,11 @@ def local_contrast_normalization(img, sigma=10):
             if var < 0: var = 0.0 # Prevent domain errors from float inaccuracies
             local_var_sqrt = math.sqrt(var)
             
-            result[r][c] = centered[r][c] / (local_var_sqrt + 0.01)
+            if local_var_sqrt < threshold:
+                result[r][c] = 0.0
+            else:
+                # Use a slightly larger epsilon (0.1) for better stability
+                result[r][c] = centered[r][c] / (local_var_sqrt + 0.1)
             
     return np.array(result)
 
@@ -158,12 +163,15 @@ def compute_color_feature(image_path, blocks=4):
             
         img = Image.fromarray(img_uint8)
         
+    #print(f"Original image size: {img.size}")
     # Resize to exactly 4x4
     img_small = img.resize((blocks, blocks), Image.Resampling.LANCZOS)
+    #print(f"Resized image size for color feature: {img_small.size}")
     img_small_array = np.array(img_small) / 255.0
     
     # NumPy RGB to LAB conversion (Standard D65 Illuminant)
-    def rgb_to_xyz(rgb):
+    def rgb_to_xyz(rgb_input):
+        rgb = rgb_input.copy()
         mask = rgb > 0.04045
         rgb[mask] = ((rgb[mask] + 0.055) / 1.055) ** 2.4
         rgb[~mask] = rgb[~mask] / 12.92
@@ -203,7 +211,7 @@ def compute_gist(image_path, mask_path=None, scales=5, orientations=6, blocks=4)
     # 1. Load Image
     if isinstance(image_path, str):
         img = Image.open(image_path).convert('L')
-        img = img.resize((128, 128), Image.Resampling.LANCZOS)
+        img = img.resize((256, 256), Image.Resampling.LANCZOS)
         img_array = np.array(img) / 255.0
     else:
         img_array = image_path 
@@ -214,20 +222,33 @@ def compute_gist(image_path, mask_path=None, scales=5, orientations=6, blocks=4)
 
     if mask_path and os.path.exists(mask_path):
         mask_img = Image.open(mask_path).convert('L')
-        mask_img = mask_img.resize((128, 128), Image.Resampling.NEAREST)
+        mask_img = mask_img.resize((256, 256), Image.Resampling.NEAREST)
         mask_array = np.array(mask_img) / 255.0
         
         # Assume > 0.5 is hole/invalid (standard inpainting mask)
         hole_mask = mask_array > 0.5
         valid_mask = mask_array <= 0.5
         
-        # A. Fill hole with mean of valid pixels 
-        # (Reduces hard edge artifacts during Gabor convolution)
+        # A. Fill hole smoothly to avoid hard edge artifacts during Gabor convolution
         if np.any(valid_mask):
             mean_val = np.mean(img_array[valid_mask])
         else:
             mean_val = 0.5
-        img_array[hole_mask] = mean_val
+
+        # Create a working copy
+        img_filled = img_array.copy()
+
+        # Initially fill with mean
+        img_filled[hole_mask] = mean_val
+
+        # Diffuse the valid pixels into the hole iteratively
+        # Iterations with a small sigma create a smooth inward bleed
+        for _ in range(20):
+            blurred_img = gaussian_filter(img_filled, sigma=2)
+            img_filled[hole_mask] = blurred_img[hole_mask]
+
+        # Assign back to original array
+        img_array = img_filled
         
         # B. Compute Weights for each 4x4 spatial block
         # This matches the paper's "weights each spatial bin"
@@ -246,7 +267,20 @@ def compute_gist(image_path, mask_path=None, scales=5, orientations=6, blocks=4)
 
     # 3. Normalization and Gabor Filtering
     img_array = local_contrast_normalization(img_array)
+    #print("Image array after local contrast normalization:")
+    #print(img_array.shape)
     
+    # def plot_histogram(arr):
+    #     plt.figure(figsize=(8, 4))
+    #     plt.hist(arr.flatten(), bins=100, color='crimson', alpha=0.7)
+    #     plt.title("Value Distribution (Histogram)")
+    #     plt.xlabel("Value")
+    #     plt.ylabel("Pixel Count")
+    #     plt.yscale('log') # Log scale helps find tiny amounts of noise
+    #     plt.grid(True, alpha=0.3)
+    #     plt.show()
+    # plot_histogram(img_array)
+    # exit()    
     gist_data = np.zeros((scales, orientations, blocks, blocks))
     sigmas = np.linspace(4.0, 1.0, scales) 
     lambdas = sigmas * 2.5 
@@ -314,7 +348,7 @@ def visualize_gist(gist_data, scales, orientations):
     plt.colorbar(im, cax=cax, label='Activation (Energy)')
     plt.tight_layout(rect=[0.08, 0.08, 0.95, 0.95])
     plt.savefig("gist_visualization.png", dpi=300, bbox_inches='tight', facecolor=fig.get_facecolor())
-    plt.show()
+    #plt.show()
     
 def generate_vertical_split(size=128):
     """
@@ -322,13 +356,27 @@ def generate_vertical_split(size=128):
     split vertically in the center.
     """
     # 1. Start with an array of zeros (all black)
-    image_array = np.zeros((size, size), dtype=np.float32)
+    image_array = np.ones((size, size), dtype=np.float32)
     
     # 2. Set the right half to 1 (all white)
     # This selects rows :, and columns from size//2 (64) to the end.
-    image_array[:, size // 2:] = 1.0
+    image_array[:, size // 2:] = 0.0
     
     return image_array
+
+def generate_high_freq_checkerboard(size=128, block_size=2):
+    """
+    Generates a dense checkerboard pattern. 
+    Smaller block_size = higher frequency = more activation in the bottom rows.
+    """
+    # Create a small 2x2 base pattern
+    base = np.array([[0, 1], [1, 0]])
+    # Repeat it to fill the image size
+    image_array = np.tile(base, (size // (2 * block_size), size // (2 * block_size)))
+    # Repeat elements to create blocks of 'block_size'
+    image_array = np.repeat(np.repeat(image_array, block_size, axis=0), block_size, axis=1)
+    
+    return image_array.astype(np.float32)
 
 def test_color_feature():
     print("Running test case: Texture vs Color.")
@@ -381,13 +429,14 @@ if __name__ == '__main__':
         
         # TEST: Generate a pure white image
         print("No image provided. Processing white image...")
-        #white_img = np.ones((128, 128))
-        test_img = generate_vertical_split(128)
+        test_img = np.ones((128, 128))
+        #test_img = generate_vertical_split(128)
+        #test_img = generate_high_freq_checkerboard(128, 2)
         #test_img = np.zeros((128, 128))
         #test_img[64:, :] = 1.0
         # Create the PIL image object first, then call .save() on it
         Image.fromarray((test_img * 255).astype(np.uint8)).save("horiz_split.png")
         data, weights = compute_gist(test_img)
     
-    print(data.shape)
+    #print(data.shape)
     visualize_gist(data, 5, 6)

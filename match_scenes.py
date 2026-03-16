@@ -3,11 +3,25 @@ import argparse
 import numpy as np
 import pickle
 from PIL import Image
+import cv2
 
 from test_image_creation import compute_gist, compute_color_feature,visualize_gist
 
+def resize_longest_side(img, max_dim=1024):
+    h, w = img.shape[:2]
+    longest = max(h, w)
+
+    if longest <= max_dim:
+        return img
+
+    scale = max_dim / longest
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+
+    return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
 def load_or_compute_db_features(db_dir, cache_file="db_features.pkl"):
-    """Loads precomputed features if possible, else computes them."""
+
     if os.path.exists(cache_file):
         print(f"Loading database features from {cache_file}...")
         with open(cache_file, "rb") as f:
@@ -15,12 +29,14 @@ def load_or_compute_db_features(db_dir, cache_file="db_features.pkl"):
 
     print("Computing features for database images...")
     db_features = []
-    
+
     for filename in os.listdir(db_dir):
-        if not filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+
+        if not filename.lower().endswith(('.png','.jpg','.jpeg','.bmp')):
             continue
-            
+
         filepath = os.path.join(db_dir, filename)
+
         try:
             # The database images have no mask, so weights are all 1
             gist_data, _ = compute_gist(filepath)
@@ -32,7 +48,9 @@ def load_or_compute_db_features(db_dir, cache_file="db_features.pkl"):
                 'gist': gist_data,
                 'color': color_data
             })
+
             print(f"Processed {filename}")
+
         except Exception as e:
             print(f"Failed to process {filename}: {e}")
             
@@ -47,9 +65,11 @@ def find_k_best_matches(query_image, mask_image, db_dir, k=10):
     # 1. Compute query features
     print("Computing query features...")
     q_gist, q_weights = compute_gist(query_image, mask_image)
+    print("Query GIST shape:", q_gist.shape)
     q_color = compute_color_feature(query_image)
     
     visualize_gist(q_gist,5,6)
+    #exit()
     
     # 2. Load ALL database features into memory as giant arrays
     db_features = load_or_compute_db_features(db_dir)
