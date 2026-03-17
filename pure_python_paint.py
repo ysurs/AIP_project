@@ -207,6 +207,23 @@ from local_context_matching import match_context_optimized
 import cv2
 from graph_cut import find_optimal_seam
 import numpy as np
+from skimage.exposure import match_histograms
+def color_transfer(source, target):
+    # Convert to LAB color space
+    s_lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB).astype(np.float32)
+    t_lab = cv2.cvtColor(target, cv2.COLOR_BGR2LAB).astype(np.float32)
+
+    # Get mean and std dev for each channel
+    s_mean, s_std = cv2.meanStdDev(s_lab)
+    t_mean, t_std = cv2.meanStdDev(t_lab)
+
+    # Shift the source colors to match the target's distribution
+    s_lab -= s_mean.flatten()
+    s_lab = (s_lab * (t_std.flatten() / (s_std.flatten() + 1e-5))) + t_mean.flatten()
+
+    # Clip values and convert back to BGR
+    s_lab = np.clip(s_lab, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(s_lab, cv2.COLOR_LAB2BGR)
 
 def main():
     global root, canvas, WIDTH, HEIGHT, ui_mask, bg_img, image_path
@@ -324,24 +341,46 @@ def main():
             context_mask = ((dilated_hole > 0) & (~mask_bool)).astype(np.uint8) * 255
 
             coords = np.argwhere(context_mask > 0)
-            y1, x1, y2, x2 = coords[:,0].min(), coords[:,1].min(), coords[:,0].max()+1, coords[:,1].max()+1
+            orig_y1, orig_x1 = coords[:,0].min(), coords[:,1].min()
+            orig_y2, orig_x2 = coords[:,0].max()+1, coords[:,1].max()+1
+
+            # 4. Safely Pad the Query
+            pad = 100
+            y1 = max(0, orig_y1 - pad)
+            x1 = max(0, orig_x1 - pad)
+            y2 = min(q_bgr.shape[0], orig_y2 + pad)
+            x2 = min(q_bgr.shape[1], orig_x2 + pad)
+
+            pad_top = orig_y1 - y1
+            pad_left = orig_x1 - x1
+
             box_h, box_w = y2 - y1, x2 - x1
 
-            # 4. Crop the Query Image and Masks
             q_crop = q_bgr[y1:y2, x1:x2]
             hole_mask_crop = mask_img[y1:y2, x1:x2]
             context_mask_crop = context_mask[y1:y2, x1:x2]
 
-            # 5. Extract the Matched Patch from the Database Image
+            # 5. Extract the Matched Patch (BULLETPROOF VERSION)
             best_img = match_img_bgr_list[best_img_idx]
-
-            # Safely resize using the exact same math from the matching loop
             sh, sw = int(best_img.shape[0] * best_scale), int(best_img.shape[1] * best_scale)
             best_img_scaled = cv2.resize(best_img, (sw, sh))
 
-            # Crop the candidate patch using the placement coordinates
-            m_crop = best_img_scaled[int(min_y):int(min_y)+box_h, int(min_x):int(min_x)+box_w]
+            # NEW: Add a mirrored border to the database image so it NEVER runs out of bounds!
+            best_img_padded = cv2.copyMakeBorder(best_img_scaled, pad, pad, pad, pad, cv2.BORDER_REFLECT)
 
+            # Calculate the exact crop coordinates inside the padded image
+            start_y = int(min_y) + pad - pad_top
+            start_x = int(min_x) + pad - pad_left
+            
+            m_crop = best_img_padded[start_y : start_y + box_h, start_x : start_x + box_w]
+            
+            # Remove the "if m_crop.shape != q_crop.shape" safety net. We don't need it anymore!
+            
+            # ------------------------------------------------------------------
+            # MANDATORY: Gentle Color Transfer so Graph Cut finds a jagged seam
+            # ------------------------------------------------------------------
+            m_crop = color_transfer(m_crop, q_crop)
+            
             # 6. Find Optimal Seam (Graph Cut)
             print("Calculating Graph Cut seam...")
             seam_mask = find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop)

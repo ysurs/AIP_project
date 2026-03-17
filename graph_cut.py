@@ -85,166 +85,250 @@ import maxflow  # pip install PyMaxflow
     
 #     return seam_mask
 
-def find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop):
 
+
+# def find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop):
+
+#     h, w = q_crop.shape[:2]
+
+
+
+#     # --------------------------------------------------
+
+#     # 1. Compute color difference
+
+#     # --------------------------------------------------
+
+#     qf = q_crop.astype(np.float32)
+
+#     mf = m_crop.astype(np.float32)
+
+
+
+#     color_diff = np.sqrt(np.sum((qf - mf) ** 2, axis=2))
+
+
+
+#     # --------------------------------------------------
+
+#     # 2. Compute gradient (structure) difference
+
+#     # --------------------------------------------------
+
+#     q_gray = cv2.cvtColor(q_crop, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+#     m_gray = cv2.cvtColor(m_crop, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+
+
+#     qgx = cv2.Sobel(q_gray, cv2.CV_32F, 1, 0, ksize=3)
+
+#     qgy = cv2.Sobel(q_gray, cv2.CV_32F, 0, 1, ksize=3)
+
+#     mgx = cv2.Sobel(m_gray, cv2.CV_32F, 1, 0, ksize=3)
+
+#     mgy = cv2.Sobel(m_gray, cv2.CV_32F, 0, 1, ksize=3)
+
+
+
+#     q_mag = np.sqrt(qgx**2 + qgy**2)
+
+#     m_mag = np.sqrt(mgx**2 + mgy**2)
+
+
+
+#     grad_diff = np.abs(q_mag - m_mag)
+
+
+
+#     # --------------------------------------------------
+
+#     # 3. Combine costs
+
+#     # --------------------------------------------------
+
+#     lambda_grad = 2.0
+
+#     diff = color_diff + lambda_grad * grad_diff
+
+
+
+#     diff += 1e-5  # avoid zero weights
+
+
+
+#     # --------------------------------------------------
+
+#     # 4. Build graph
+
+#     # --------------------------------------------------
+
+#     g = maxflow.Graph[float]()
+
+#     nodes = g.add_grid_nodes((h, w))
+
+
+
+#     # Proper grid edges (4-connected)
+
+#     g.add_grid_edges(nodes, weights=diff, structure=np.array([[0,1,0],
+
+#                                                               [1,0,1],
+
+#                                                               [0,1,0]]),
+
+#                      symmetric=True)
+
+
+
+#     # --------------------------------------------------
+
+#     # 5. Terminal costs (IMPORTANT FIX)
+
+#     # --------------------------------------------------
+
+#     INF = 1e9
+
+
+
+#     cap_source = np.zeros((h, w), dtype=np.float32)  # patch
+
+#     cap_sink = np.zeros((h, w), dtype=np.float32)    # query
+
+
+
+#     is_hole = hole_mask_crop > 127
+
+#     is_context = context_mask_crop > 127
+
+#     is_outside = ~(is_hole | is_context)
+
+
+
+#     # Force hole → patch
+
+#     cap_source[is_hole] = INF
+
+#     cap_sink[is_hole] = 0
+
+
+
+#     # Force outside → query
+
+#     cap_source[is_outside] = 0
+
+#     cap_sink[is_outside] = INF
+
+
+
+#     # Context = free (cut happens here)
+
+
+
+#     g.add_grid_tedges(nodes, cap_source, cap_sink)
+
+
+
+#     # --------------------------------------------------
+
+#     # 6. Solve
+
+#     # --------------------------------------------------
+
+#     g.maxflow()
+
+
+
+#     segments = g.get_grid_segments(nodes)
+
+
+
+#     # True = sink (query), False = source (patch)
+
+#     seam_mask = (~segments).astype(np.uint8) * 255
+
+
+
+#     return seam_mask
+
+def find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop):
     h, w = q_crop.shape[:2]
 
-
-
-    # --------------------------------------------------
-
     # 1. Compute color difference
-
-    # --------------------------------------------------
-
     qf = q_crop.astype(np.float32)
-
     mf = m_crop.astype(np.float32)
-
-
-
     color_diff = np.sqrt(np.sum((qf - mf) ** 2, axis=2))
 
-
-
-    # --------------------------------------------------
-
     # 2. Compute gradient (structure) difference
-
-    # --------------------------------------------------
-
     q_gray = cv2.cvtColor(q_crop, cv2.COLOR_BGR2GRAY).astype(np.float32)
-
     m_gray = cv2.cvtColor(m_crop, cv2.COLOR_BGR2GRAY).astype(np.float32)
-
-
-
+    
     qgx = cv2.Sobel(q_gray, cv2.CV_32F, 1, 0, ksize=3)
-
     qgy = cv2.Sobel(q_gray, cv2.CV_32F, 0, 1, ksize=3)
-
     mgx = cv2.Sobel(m_gray, cv2.CV_32F, 1, 0, ksize=3)
-
     mgy = cv2.Sobel(m_gray, cv2.CV_32F, 0, 1, ksize=3)
-
-
-
+    
     q_mag = np.sqrt(qgx**2 + qgy**2)
-
     m_mag = np.sqrt(mgx**2 + mgy**2)
-
-
-
     grad_diff = np.abs(q_mag - m_mag)
 
-
-
     # --------------------------------------------------
-
     # 3. Combine costs
-
     # --------------------------------------------------
-
-    lambda_grad = 2.0
-
-    diff = color_diff + lambda_grad * grad_diff
-
-
-
-    diff += 1e-5  # avoid zero weights
-
-
-
-    # --------------------------------------------------
+    weight_grad = 2.0
+    
+    hole_inv = (~(hole_mask_crop > 127)).astype(np.uint8) * 255
+    dist = cv2.distanceTransform(hole_inv, cv2.DIST_L2, 5)
+    if np.max(dist) > 0:
+        dist = dist / np.max(dist)
+        
+    # THE FIX: Massively increase the distance weight. 
+    # color_diff can easily be 100-200+, so this needs to be comparable.
+    weight_dist = 300.0 
+    
+    # Optional but highly recommended: square the distance so the penalty
+    # is low near the hole, but curves upward aggressively near the edges.
+    diff = color_diff + (weight_grad * grad_diff) + (weight_dist * (dist ** 2))
+    diff += 1e-5
 
     # 4. Build graph
-
-    # --------------------------------------------------
-
     g = maxflow.Graph[float]()
-
     nodes = g.add_grid_nodes((h, w))
-
-
-
-    # Proper grid edges (4-connected)
-
     g.add_grid_edges(nodes, weights=diff, structure=np.array([[0,1,0],
-
                                                               [1,0,1],
-
-                                                              [0,1,0]]),
-
-                     symmetric=True)
-
-
+                                                              [0,1,0]]), symmetric=True)
 
     # --------------------------------------------------
-
-    # 5. Terminal costs (IMPORTANT FIX)
-
+    # 5. Terminal costs (NEW: THE BOUNDARY WALL)
     # --------------------------------------------------
-
     INF = 1e9
-
-
-
     cap_source = np.zeros((h, w), dtype=np.float32)  # patch
-
     cap_sink = np.zeros((h, w), dtype=np.float32)    # query
 
-
-
     is_hole = hole_mask_crop > 127
-
     is_context = context_mask_crop > 127
-
     is_outside = ~(is_hole | is_context)
 
-
-
-    # Force hole → patch
-
+    # Force hole -> patch
     cap_source[is_hole] = INF
-
     cap_sink[is_hole] = 0
 
-
-
-    # Force outside → query
-
+    # Force outside -> query
     cap_source[is_outside] = 0
-
     cap_sink[is_outside] = INF
 
-
-
-    # Context = free (cut happens here)
-
-
+    # THE WALL: Force the outermost 3 pixels of the array to be Query (Sink).
+    # This prevents the patch from EVER creating a straight edge along the bounding box.
+    cap_source[0:3, :] = 0; cap_sink[0:3, :] = INF  # Top edge
+    cap_source[-3:, :] = 0; cap_sink[-3:, :] = INF  # Bottom edge
+    cap_source[:, 0:3] = 0; cap_sink[:, 0:3] = INF  # Left edge
+    cap_source[:, -3:] = 0; cap_sink[:, -3:] = INF  # Right edge
 
     g.add_grid_tedges(nodes, cap_source, cap_sink)
 
-
-
-    # --------------------------------------------------
-
     # 6. Solve
-
-    # --------------------------------------------------
-
     g.maxflow()
-
-
-
     segments = g.get_grid_segments(nodes)
-
-
-
-    # True = sink (query), False = source (patch)
-
     seam_mask = (~segments).astype(np.uint8) * 255
-
-
 
     return seam_mask
