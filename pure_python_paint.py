@@ -346,11 +346,35 @@ def main():
             print("Calculating Graph Cut seam...")
             seam_mask = find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop)
 
+            # # 7. Poisson Blending
+            # print("Applying Poisson Blending...")
+            # # cv2.seamlessClone requires the center (x,y) of where the patch will be placed in the target image
+            # center_x = int(x1 + (box_w / 2))
+            # center_y = int(y1 + (box_h / 2))
+            # center_point = (center_x, center_y)
+
+            # # Apply standard Poisson blending
+            # final_result = cv2.seamlessClone(
+            #     src=m_crop, 
+            #     dst=q_bgr, 
+            #     mask=seam_mask, 
+            #     p=center_point, 
+            #     flags=cv2.NORMAL_CLONE
+            # )
+            
+            # DEBUG: Save this to your disk to prove the graph cut is working!
+            # You should see a jagged white shape, not a perfect rectangle.
+            cv2.imwrite("debug_seam_mask.png", seam_mask)
+
             # 7. Poisson Blending
             print("Applying Poisson Blending...")
-            # cv2.seamlessClone requires the center (x,y) of where the patch will be placed in the target image
-            center_x = int(x1 + (box_w / 2))
-            center_y = int(y1 + (box_h / 2))
+
+            # THE FIX: Find the bounding box of the actual graph cut mask
+            x, y, w_mask, h_mask = cv2.boundingRect(seam_mask)
+
+            # Calculate the center of the *mask's bounding box* relative to the whole destination image
+            center_x = int(x1 + x + (w_mask / 2))
+            center_y = int(y1 + y + (h_mask / 2))
             center_point = (center_x, center_y)
 
             # Apply standard Poisson blending

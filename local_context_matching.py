@@ -410,7 +410,7 @@ def get_texture_map(img_gray):
     cv2.normalize(mag_blurred, mag_blurred, 0, 255, cv2.NORM_MINMAX)
     return mag_blurred
 
-def match_context_optimized(query_img_path, mask_path, match_img_list, weight_tex=0.5):
+def match_context_optimized(query_img_path, mask_path, match_img_list, weight_tex=10):
     q_bgr = cv2.imread(query_img_path)
     mask_img = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
     mask_bool = mask_img > 127
