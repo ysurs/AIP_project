@@ -251,7 +251,7 @@ import maxflow  # pip install PyMaxflow
 
 #     return seam_mask
 
-def find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop):
+def find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop, first_component=False):
     h, w = q_crop.shape[:2]
 
     # 1. Compute color difference
@@ -330,5 +330,14 @@ def find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop):
     g.maxflow()
     segments = g.get_grid_segments(nodes)
     seam_mask = (~segments).astype(np.uint8) * 255
+    
+    if first_component:
+        # 6. Solve
+        seam_energy = g.maxflow() # CAPTURE the max flow value here
+        segments = g.get_grid_segments(nodes)
+        seam_mask = (~segments).astype(np.uint8) * 255
+
+        return seam_mask, seam_energy
+    
 
     return seam_mask
