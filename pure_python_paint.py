@@ -575,6 +575,8 @@ def main(args):
                 
                 #m_crop = color_transfer(m_crop, q_crop)
                 
+                cv2.imwrite(f"debug_match_{i}.png", m_crop)
+                
                 # Unpack both values, but we only care about the mask in the base pipeline
                 seam_mask= find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop,first_component=False)
 
@@ -590,6 +592,7 @@ def main(args):
                 # final_result = cv2.seamlessClone(
                 #     src=m_crop, dst=q_bgr, mask=seam_mask, p=(center_x, center_y), flags=cv2.NORMAL_CLONE
                 # )
+                cv2.imwrite(f"debug_seam_{i}.png", seam_mask * 255)
                 
                 final_result = seamless_clone_pure(
                 src=m_crop, 
