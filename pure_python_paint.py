@@ -12,336 +12,6 @@ import argparse
 
 import numpy as np
 
-# def bgr_to_lab_pure(img_bgr):
-#     # 1. Normalize and split
-#     b = img_bgr[:, :, 0] / 255.0
-#     g = img_bgr[:, :, 1] / 255.0
-#     r = img_bgr[:, :, 2] / 255.0
-
-#     # 2. Inverse sRGB Gamma (Arithmetic masking instead of np.where)
-#     def gamma_inv(c):
-#         mask_high = (c > 0.04045)
-#         mask_low = (c <= 0.04045)
-#         return mask_high * (((c + 0.055) / 1.055) ** 2.4) + mask_low * (c / 12.92)
-
-#     r, g, b = gamma_inv(r), gamma_inv(g), gamma_inv(b)
-
-#     # 3. RGB to XYZ Matrix Multiplication
-#     x = r * 0.4124564 + g * 0.3575761 + b * 0.1804375
-#     y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750
-#     z = r * 0.0193339 + g * 0.1191920 + b * 0.9503041
-
-#     # 4. XYZ to LAB Conversion (Normalized by D65 Illuminant)
-#     x /= 0.95047
-#     y /= 1.00000
-#     z /= 1.08883
-
-#     def f_xyz(t):
-#         mask_high = (t > 0.008856)
-#         mask_low = (t <= 0.008856)
-#         return mask_high * (t ** (1/3)) + mask_low * ((7.787 * t) + (16 / 116))
-
-#     fx, fy, fz = f_xyz(x), f_xyz(y), f_xyz(z)
-
-#     l = (116 * fy) - 16
-#     a = 500 * (fx - fy)
-#     b_channel = 200 * (fy - fz)
-
-#     # 5. Stack into LAB array (numpy at return)
-#     return np.dstack([l, a, b_channel]).astype(np.float32)
-
-# def lab_to_bgr_pure(img_lab):
-#     l = img_lab[:, :, 0]
-#     a = img_lab[:, :, 1]
-#     b_channel = img_lab[:, :, 2]
-
-#     # 1. LAB to XYZ
-#     fy = (l + 16) / 116
-#     fx = (a / 500) + fy
-#     fz = fy - (b_channel / 200)
-
-#     def f_inv(t):
-#         t3 = t ** 3
-#         mask_high = (t3 > 0.008856)
-#         mask_low = (t3 <= 0.008856)
-#         return mask_high * t3 + mask_low * ((t - 16/116) / 7.787)
-
-#     x = f_inv(fx) * 0.95047
-#     y = f_inv(fy) * 1.00000
-#     z = f_inv(fz) * 1.08883
-
-#     # 2. XYZ to RGB Matrix Multiplication
-#     r = x * 3.2404542 - y * 1.5371385 - z * 0.4985314
-#     g = -x * 0.9692660 + y * 1.8760108 + z * 0.0415560
-#     b = x * 0.0556434 - y * 0.2040259 + z * 1.0572252
-
-#     # 3. sRGB Gamma Correction
-#     def gamma_fwd(c):
-#         mask_high = (c > 0.0031308)
-#         mask_low = (c <= 0.0031308)
-#         return mask_high * (1.055 * (c ** (1/2.4)) - 0.055) + mask_low * (12.92 * c)
-
-#     r, g, b = gamma_fwd(r), gamma_fwd(g), gamma_fwd(b)
-
-#     # 4. Scale and pure-math clip (No np.clip allowed)
-#     bgr = np.dstack([b * 255, g * 255, r * 255])
-
-#     # Pure arithmetic clipping to 0-255 bounds
-#     bgr = bgr * (bgr >= 0) + 0 * (bgr < 0)
-#     bgr = bgr * (bgr <= 255) + 255 * (bgr > 255)
-
-#     return bgr.astype(np.uint8)
-
-# def get_mean_std_pure(channel):
-#     n = channel.shape[0] * channel.shape[1]
-#     mean_val = sum(channel.flat) / n
-#     # Variance = Sum of squared differences / n
-#     std_val = (sum(((channel - mean_val) ** 2).flat) / n) ** 0.5
-#     return mean_val, std_val
-
-# def color_transfer(source, target):
-#     # 1. Convert to LAB
-#     s_lab = bgr_to_lab_pure(source.astype(np.float32))
-#     t_lab = bgr_to_lab_pure(target.astype(np.float32))
-
-#     # 2. Compute Mean and Std for each channel
-#     s_means, s_stds, t_means, t_stds = [], [], [], []
-#     for i in range(3):
-#         sm, ss = get_mean_std_pure(s_lab[:, :, i])
-#         tm, ts = get_mean_std_pure(t_lab[:, :, i])
-#         s_means.append(sm); s_stds.append(ss)
-#         t_means.append(tm); t_stds.append(ts)
-
-#     # 3. Shift source colors
-#     for i in range(3):
-#         s_lab[:, :, i] -= s_means[i]
-#         s_lab[:, :, i] = (s_lab[:, :, i] * (t_stds[i] / (s_stds[i] + 1e-5))) + t_means[i]
-
-#     # 4. Convert back to BGR
-#     return lab_to_bgr_pure(s_lab)
-
-# def resize_image_pure(img, new_width, new_height):
-#     """
-#     Pure Numpy/Math implementation of cv2.resize using Bilinear Interpolation.
-#     """
-#     old_height, old_width, channels = img.shape
-
-#     # Calculate the scaling factors
-#     x_ratio = float(old_width - 1) / (new_width - 1) if new_width > 1 else 0
-#     y_ratio = float(old_height - 1) / (new_height - 1) if new_height > 1 else 0
-
-#     # Create coordinate lists using pure Python
-#     y_old = [i * y_ratio for i in range(new_height)]
-#     x_old = [j * x_ratio for j in range(new_width)]
-
-#     # Get the integer parts (top-left pixel coordinates) using Python int()
-#     y_low = [int(y) for y in y_old]
-#     x_low = [int(x) for x in x_old]
-
-#     # Get the bottom-right pixel coordinates using Python min()
-#     y_high = [min(y + 1, old_height - 1) for y in y_low]
-#     x_high = [min(x + 1, old_width - 1) for x in x_low]
-
-#     # Get the decimal parts (weights for interpolation)
-#     y_weight = [y_old[i] - y_low[i] for i in range(new_height)]
-#     x_weight = [x_old[j] - x_low[j] for j in range(new_width)]
-
-#     # Convert index lists to arrays for numpy advanced indexing (at return phase)
-#     y_low_arr = np.array(y_low)
-#     x_low_arr = np.array(x_low)
-#     y_high_arr = np.array(y_high)
-#     x_high_arr = np.array(x_high)
-#     y_w_arr = np.array(y_weight)[:, None, None]
-#     x_w_arr = np.array(x_weight)[None, :, None]
-
-#     # Perform the Bilinear interpolation for all channels at once
-#     channel_results = []
-#     for c in range(channels):
-#         # Extract the 4 surrounding pixels for all points
-#         top_left = img[y_low_arr[:, None], x_low_arr, c]
-#         top_right = img[y_low_arr[:, None], x_high_arr, c]
-#         bottom_left = img[y_high_arr[:, None], x_low_arr, c]
-#         bottom_right = img[y_high_arr[:, None], x_high_arr, c]
-
-#         # Calculate horizontal interpolations
-#         top = top_left * (1 - x_w_arr[:, :, 0]) + top_right * x_w_arr[:, :, 0]
-#         bottom = bottom_left * (1 - x_w_arr[:, :, 0]) + bottom_right * x_w_arr[:, :, 0]
-
-#         # Calculate vertical interpolation
-#         channel_results.append(top * (1 - y_w_arr[:, :, 0]) + bottom * y_w_arr[:, :, 0])
-
-#     # Construct output array (numpy at return)
-#     resized = np.dstack(channel_results)
-
-#     # Arithmetic clip and convert back to uint8
-#     resized = resized * (resized >= 0) + 0 * (resized < 0)
-#     resized = resized * (resized <= 255) + 255 * (resized > 255)
-
-#     return resized.astype(np.uint8)
-
-# def dilate_pure(mask, kernel_size=161):
-#     """
-#     Pure math replacement for cv2.dilate with a circular/elliptical kernel.
-#     Instead of a slow sliding window, we draw the radius around active pixels.
-#     """
-#     h, w = mask.shape
-#     radius = kernel_size // 2
-#     out = [[False] * w for _ in range(h)]
-
-#     # Find coordinates of all white pixels using pure Python
-#     white_pixels = [(y, x) for y in range(h) for x in range(w) if mask[y, x]]
-
-#     # Apply the mathematical circle equation to active regions
-#     for y, x in white_pixels:
-#         y0 = max(0, y - radius)
-#         y1 = min(h, y + radius + 1)
-#         x0 = max(0, x - radius)
-#         x1 = min(w, x + radius + 1)
-
-#         for gy in range(y0, y1):
-#             for gx in range(x0, x1):
-#                 # (x - h)^2 + (y - k)^2 <= r^2
-#                 if (gy - y)**2 + (gx - x)**2 <= radius**2:
-#                     out[gy][gx] = True
-
-#     # Return as numpy array (numpy at return)
-#     return np.array([[255 if out[i][j] else 0 for j in range(w)] for i in range(h)], dtype=np.uint8)
-
-# def bounding_rect_pure(mask):
-#     """
-#     Pure math replacement for cv2.boundingRect.
-#     Finds the extreme x and y coordinates of non-zero pixels.
-#     """
-#     h, w = mask.shape
-#     # Collapse the 2D array to 1D lists to find where pixels exist
-#     rows = [any(mask[i, :]) for i in range(h)]
-#     cols = [any(mask[:, j]) for j in range(w)]
-
-#     # Find the first and last True values using pure Python
-#     ymin = next(i for i, v in enumerate(rows) if v)
-#     ymax = h - 1 - next(i for i, v in enumerate(reversed(rows)) if v)
-#     xmin = next(j for j, v in enumerate(cols) if v)
-#     xmax = w - 1 - next(j for j, v in enumerate(reversed(cols)) if v)
-
-#     width = xmax - xmin + 1
-#     height = ymax - ymin + 1
-
-#     return xmin, ymin, width, height
-
-# def pad_reflect_pure(img, pad):
-#     """
-#     Pure math replacement for cv2.copyMakeBorder(..., cv2.BORDER_REFLECT).
-#     It mathematically mirrors the arrays across the edges.
-#     """
-#     H, W, C = img.shape
-#     padded = np.array([[[0]*C for _ in range(W + 2*pad)] for _ in range(H + 2*pad)], dtype=img.dtype)
-    
-#     # Insert the original image in the center
-#     padded[pad:pad+H, pad:pad+W] = img
-    
-#     # Reflect Top and Bottom
-#     padded[:pad, pad:pad+W] = img[0:pad][::-1]
-#     padded[pad+H:, pad:pad+W] = img[H-pad:H][::-1]
-    
-#     # Reflect Left and Right (including the corners we just made)
-#             # Left
-#     padded[:, :pad] = padded[:, pad:2*pad][:, ::-1]
-
-#         # Right
-#     padded[:, pad+W:] = padded[:, W:pad+W][:, ::-1]
-    
-#     return padded
-
-# import numpy as np
-
-# def seamless_clone_pure(src, dst, mask, center):
-#     """
-#     Pure math implementation of cv2.seamlessClone (NORMAL_CLONE).
-#     Includes edge-collision detection to handle patches that exceed image boundaries.
-#     """
-#     src_h, src_w, channels = src.shape
-#     dst_h, dst_w, _ = dst.shape
-#     center_x, center_y = center
-    
-#     # 1. Calculate ideal boundary coordinates
-#     top = center_y - src_h // 2
-#     left = center_x - src_w // 2
-#     bottom = top + src_h
-#     right = left + src_w
-    
-#     # 2. Find how much to crop from src if it spills outside dst bounds
-#     src_top = max(0, -top)
-#     src_left = max(0, -left)
-#     src_bottom = src_h - max(0, bottom - dst_h)
-#     src_right = src_w - max(0, right - dst_w)
-    
-#     # 3. Calculate safe bounds for dst (prevents negative indexing / truncation)
-#     dst_top = max(0, top)
-#     dst_left = max(0, left)
-#     dst_bottom = min(dst_h, bottom)
-#     dst_right = min(dst_w, right)
-    
-#     # 4. Slice EVERYTHING safely so shapes perfectly align
-#     roi = dst[dst_top:dst_bottom, dst_left:dst_right].astype(np.float32)
-#     src_f = src[src_top:src_bottom, src_left:src_right].astype(np.float32)
-#     mask_crop = mask[src_top:src_bottom, src_left:src_right]
-    
-#     # Normalize mask to boolean and expand to 3D for RGB broadcasting
-#     mask_bool = mask_crop > 127
-#     mask_3d = mask_bool[:, :, None]
-    
-#     # Helper function to safely pad boundaries by 1 pixel (Pure slicing)
-#     def pad_1px(img_array):
-#         h, w, c = img_array.shape
-#         padded = np.array([[[0.0]*c for _ in range(w + 2)] for _ in range(h + 2)], dtype=img_array.dtype)
-#         padded[1:-1, 1:-1] = img_array
-#         padded[0, 1:-1] = img_array[0, :]   # Top edge
-#         padded[-1, 1:-1] = img_array[-1, :] # Bottom edge
-#         padded[1:-1, 0] = img_array[:, 0]   # Left edge
-#         padded[1:-1, -1] = img_array[:, -1] # Right edge
-#         return padded
-
-#     # Calculate the Laplacian (gradients) of the source image
-#     src_pad = pad_1px(src_f)
-#     laplacian = (4.0 * src_f) - src_pad[:-2, 1:-1] - src_pad[2:, 1:-1] - src_pad[1:-1, :-2] - src_pad[1:-1, 2:]
-    
-#     # Initialize our working blend area
-#     blend = roi.copy()
-    
-#     # Jacobi Iteration (The Solver)
-#     iterations = 900 
-#     # for _ in range(iterations):
-#     #     b_pad = pad_1px(blend)
-        
-#     #     # Calculate next state
-#     #     b_next = (b_pad[:-2, 1:-1] + b_pad[2:, 1:-1] + b_pad[1:-1, :-2] + b_pad[1:-1, 2:] - laplacian) / 4.0
-        
-#     #     # Anchor the outside pixels, update the inside pixels
-#     #     blend = mask_3d * b_next + (~mask_3d) * roi
-#     h, w, _ = blend.shape
-
-#     for _ in range(iterations):
-#         for y in range(1, h-1):
-#             for x in range(1, w-1):
-#                 if mask_bool[y, x]:
-#                     for c in range(3):
-#                         blend[y, x, c] = (
-#                             blend[y-1, x, c] +
-#                             blend[y+1, x, c] +
-#                             blend[y, x-1, c] +
-#                             blend[y, x+1, c] +
-#                             laplacian[y, x, c]
-#                         ) / 4.0
-        
-#     # Arithmetic clipping
-#     blend = blend * (blend >= 0) + 0 * (blend < 0)
-#     blend = blend * (blend <= 255) + 255 * (blend > 255)
-    
-#     # Paste the perfectly aligned patch back in
-#     out = dst.copy()
-#     out[dst_top:dst_bottom, dst_left:dst_right] = blend.astype(np.uint8)
-    
-#     return out
 
 def bgr_to_lab_pure(img_bgr):
     # 1. Normalize and split
@@ -643,29 +313,13 @@ def seamless_clone_pure(src, dst, mask, center):
     blend = roi.copy()
     
     # Jacobi Iteration (The Solver)
-    iterations = 900 
-    # for _ in range(iterations):
-    #     b_pad = pad_1px(blend)
-        
-    #     # Calculate next state
-    #     b_next = (b_pad[:-2, 1:-1] + b_pad[2:, 1:-1] + b_pad[1:-1, :-2] + b_pad[1:-1, 2:] - laplacian) / 4.0
-        
-    #     # Anchor the outside pixels, update the inside pixels
-    #     blend = mask_3d * b_next + (~mask_3d) * roi
-    h, w, _ = blend.shape
-
+    # NOTE: Jacobi needs O(n^2) iterations for an n-pixel-wide patch.
+    # 900 = ~1% convergence for a 300px patch. Increase for better quality.
+    iterations = 5000
     for _ in range(iterations):
-        for y in range(1, h-1):
-            for x in range(1, w-1):
-                if mask_bool[y, x]:
-                    for c in range(3):
-                        blend[y, x, c] = (
-                            blend[y-1, x, c] +
-                            blend[y+1, x, c] +
-                            blend[y, x-1, c] +
-                            blend[y, x+1, c] +
-                            laplacian[y, x, c]
-                        ) / 4.0
+        b_pad = pad_1px(blend)
+        b_next = (b_pad[:-2, 1:-1] + b_pad[2:, 1:-1] + b_pad[1:-1, :-2] + b_pad[1:-1, 2:] + laplacian) / 4.0
+        blend = mask_3d * b_next + (~mask_3d) * roi
         
     # Arithmetic clipping
     blend = blend * (blend >= 0) + 0 * (blend < 0)
@@ -752,10 +406,11 @@ def main(args):
         from match_scenes import find_k_best_matches
         
         # Pass the 1024px image and mask, along with your database folder (e.g., 'beaches')
-        matches = find_k_best_matches("image_1024.png", "mask_1024.png", "skyline_1024", k=12)
+        matches = find_k_best_matches("image_1024.png", "mask_1024.png", "skyline_1024", k=20)
         
         match_img_bgr_list = []
         valid_matches = []
+        scene_scores = []
         #print(matches)
         for rank, (score, path, fname) in enumerate(matches, 1):
             print(f"{rank}. {fname} (Score: {score:.4f})")
@@ -763,8 +418,8 @@ def main(args):
             img = cv2.imread(path)
             if img is not None:
                 match_img_bgr_list.append(img)
-                
                 valid_matches.append(fname)
+                scene_scores.append(score)
         
         print("the images")
         print(match_img_bgr_list[0].shape,match_img_bgr_list[1].shape)
@@ -777,25 +432,24 @@ def main(args):
         print(local_results)
                 
         if args.use_ef1:
-            print("\n--- EF1 Enabled: Finding the mathematically best seam ---")
+            print("\n--- EF1: LCM + Seam Energy Ranking (ranks 1-20, skip rank 0 = same image) ---")
             evaluated_candidates = []
-            
-            # Phase 1: Evaluate all top matches
-            for i in range(1,min(4, len(local_results))):
+
+            # Phase 1: Evaluate LCM ranks 1-20 (skip rank 0: often the input image itself)
+            for i in range(1, min(20, len(local_results))):
                 best_match = local_results[i]
+                if best_match['placement'] is None:
+                    print(f"  Skipping LCM rank {i}: no valid placement found")
+                    continue
                 best_img_idx = best_match['match_idx']
                 best_scale, min_x, min_y = best_match['placement']
 
-                # Reload Query & Masks to get the Bounding Box 
+                # Reload Query & Masks to get the Bounding Box
                 q_bgr = cv2.imread("image_1024.png")
                 mask_img = cv2.imread("mask_1024.png", cv2.IMREAD_GRAYSCALE)
 
-                # mask_bool = mask_img > 127
-                # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (161, 161)) 
-                # dilated_hole = cv2.dilate(mask_img, kernel)
                 mask_bool = mask_img > 127
                 dilated_hole = dilate_pure(mask_img, kernel_size=161)
-                # context_mask = ((dilated_hole > 0) & (~mask_bool)).astype(np.uint8) * 255
                 context_mask = ((dilated_hole > 0) & (~mask_bool)).astype(np.uint8) * 255
 
                 coords = np.argwhere(context_mask > 0)
@@ -814,33 +468,49 @@ def main(args):
 
                 best_img = match_img_bgr_list[best_img_idx]
                 sh, sw = int(best_img.shape[0] * best_scale), int(best_img.shape[1] * best_scale)
-                # best_img_scaled = cv2.resize(best_img, (sw, sh))
-                # best_img_padded = cv2.copyMakeBorder(best_img_scaled, pad, pad, pad, pad, cv2.BORDER_REFLECT)
-                best_img_scaled = resize_image_pure(best_img, sw, sh) # From our previous step
+                best_img_scaled = resize_image_pure(best_img, sw, sh)
                 best_img_padded = pad_reflect_pure(best_img_scaled, pad)
 
                 start_y = int(min_y) + pad - pad_top
                 start_x = int(min_x) + pad - pad_left
                 m_crop = best_img_padded[start_y : start_y + box_h, start_x : start_x + box_w]
-                
-                #m_crop = color_transfer(m_crop, q_crop) # Uncomment if using color_transfer
-                
+
+                m_crop = color_transfer(m_crop, q_crop)  # disabled for debugging
+
                 # Calculate seam and energy
-                seam_mask, seam_energy = find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop,first_component=True)
-                
+                seam_mask, seam_energy = find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop, first_component=True)
+
                 evaluated_candidates.append({
                     'index': i,
                     'm_crop': m_crop,
                     'seam_mask': seam_mask,
+                    'scene_score': scene_scores[best_img_idx],
+                    'lcm_score': best_match['score'],
                     'energy': seam_energy,
                     'x1': x1,
                     'y1': y1
                 })
-            
-            # Phase 2: Sort by lowest energy
-            evaluated_candidates.sort(key=lambda x: x['energy'])
+
+            # Phase 2: EF1 criterion = LCM (context) + seam energy (compositing quality)
+            # LCM preserves semantic/contextual understanding.
+            # Seam energy adds compositing quality that LCM alone cannot see.
+            # Equal-weighted after normalising by mean so neither dominates.
+            def safe_mean(vals):
+                m = sum(vals) / len(vals)
+                return m if m != 0.0 else 1.0
+
+            mean_lcm    = safe_mean([c['lcm_score'] for c in evaluated_candidates])
+            mean_energy = safe_mean([c['energy']    for c in evaluated_candidates])
+
+            for c in evaluated_candidates:
+                c['ef1_score'] = (c['lcm_score'] / mean_lcm +
+                                  c['energy']    / mean_energy)
+
+            evaluated_candidates.sort(key=lambda x: x['ef1_score'])
             winner = evaluated_candidates[0]
-            print(f"\nEF1 automatically selected match index {winner['index']} with lowest energy: {winner['energy']}")
+            print(f"\nEF1 selected LCM rank {winner['index']} | "
+                  f"lcm={winner['lcm_score']:.4f}  energy={winner['energy']:.4f}  "
+                  f"ef1_score={winner['ef1_score']:.4f}")
             
             # Phase 3: Blend ONLY the winner
             # x, y, w_mask, h_mask = cv2.boundingRect(winner['seam_mask'])
@@ -867,75 +537,97 @@ def main(args):
             print("EF1 Pipeline complete! Saved as final_completed_image_EF1_BEST.png")
         
         else:
-            print("\n--- Base Pipeline: Saving all top matches ---")
-            for i in range(min(4, len(local_results))):
+            print("\n--- Base Pipeline: 4-Component Composite Ranking (top 20 LCM) ---")
+            base_candidates = []
+
+            # Phase 1: Evaluate top 20 LCM matches with graph cut
+            q_bgr = cv2.imread("image_1024.png")
+            mask_img = cv2.imread("mask_1024.png", cv2.IMREAD_GRAYSCALE)
+            mask_bool = mask_img > 127
+            dilated_hole = dilate_pure(mask_img, kernel_size=161)
+            context_mask = ((dilated_hole > 0) & (~mask_bool)).astype(np.uint8) * 255
+
+            coords = np.argwhere(context_mask > 0)
+            orig_y1, orig_x1 = coords[:,0].min(), coords[:,1].min()
+            orig_y2, orig_x2 = coords[:,0].max()+1, coords[:,1].max()+1
+            pad = 100
+            y1, x1 = max(0, orig_y1 - pad), max(0, orig_x1 - pad)
+            y2, x2 = min(q_bgr.shape[0], orig_y2 + pad), min(q_bgr.shape[1], orig_x2 + pad)
+            pad_top, pad_left = orig_y1 - y1, orig_x1 - x1
+            box_h, box_w = y2 - y1, x2 - x1
+            q_crop = q_bgr[y1:y2, x1:x2]
+            hole_mask_crop = mask_img[y1:y2, x1:x2]
+            context_mask_crop = context_mask[y1:y2, x1:x2]
+
+            for i in range(min(20, len(local_results))):
                 best_match = local_results[i]
+                if best_match['placement'] is None:
+                    print(f"  Skipping LCM rank {i}: no valid placement found")
+                    continue
                 best_img_idx = best_match['match_idx']
                 best_scale, min_x, min_y = best_match['placement']
 
-                # Reload Query & Masks to get the Bounding Box 
-                q_bgr = cv2.imread("image_1024.png")
-                mask_img = cv2.imread("mask_1024.png", cv2.IMREAD_GRAYSCALE)
-
-                mask_bool = mask_img > 127
-                dilated_hole = dilate_pure(mask_img, kernel_size=161)
-                context_mask = ((dilated_hole > 0) & (~mask_bool)).astype(np.uint8) * 255
-
-                coords = np.argwhere(context_mask > 0)
-                orig_y1, orig_x1 = coords[:,0].min(), coords[:,1].min()
-                orig_y2, orig_x2 = coords[:,0].max()+1, coords[:,1].max()+1
-
-                pad = 100
-                y1, x1 = max(0, orig_y1 - pad), max(0, orig_x1 - pad)
-                y2, x2 = min(q_bgr.shape[0], orig_y2 + pad), min(q_bgr.shape[1], orig_x2 + pad)
-                pad_top, pad_left = orig_y1 - y1, orig_x1 - x1
-                box_h, box_w = y2 - y1, x2 - x1
-
-                q_crop = q_bgr[y1:y2, x1:x2]
-                hole_mask_crop = mask_img[y1:y2, x1:x2]
-                context_mask_crop = context_mask[y1:y2, x1:x2]
-
                 best_img = match_img_bgr_list[best_img_idx]
                 sh, sw = int(best_img.shape[0] * best_scale), int(best_img.shape[1] * best_scale)
-                # best_img_scaled = cv2.resize(best_img, (sw, sh))
-                # best_img_padded = cv2.copyMakeBorder(best_img_scaled, pad, pad, pad, pad, cv2.BORDER_REFLECT)
-                best_img_scaled = resize_image_pure(best_img, sw, sh) # From our previous step
+                best_img_scaled = resize_image_pure(best_img, sw, sh)
                 best_img_padded = pad_reflect_pure(best_img_scaled, pad)
 
                 start_y = int(min_y) + pad - pad_top
                 start_x = int(min_x) + pad - pad_left
                 m_crop = best_img_padded[start_y : start_y + box_h, start_x : start_x + box_w]
-                
-                #m_crop = color_transfer(m_crop, q_crop)
-                
-                cv2.imwrite(f"debug_match_{i}.png", m_crop)
-                
-                # Unpack both values, but we only care about the mask in the base pipeline
-                seam_mask= find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop,first_component=False)
 
-                # x, y, w_mask, h_mask = cv2.boundingRect(seam_mask)
-                # x, y, w_mask, h_mask = bounding_rect_pure(seam_mask)
-                # center_x = int(x1 + x + (w_mask / 2))
-                # center_y = int(y1 + y + (h_mask / 2))
-                
-                h_crop, w_crop = m_crop.shape[:2]
-                center_x = int(x1 + (w_crop / 2))
-                center_y = int(y1 + (h_crop / 2))
+                m_crop = color_transfer(m_crop, q_crop)  # disabled for debugging
 
-                # final_result = cv2.seamlessClone(
-                #     src=m_crop, dst=q_bgr, mask=seam_mask, p=(center_x, center_y), flags=cv2.NORMAL_CLONE
-                # )
-                cv2.imwrite(f"debug_seam_{i}.png", seam_mask * 255)
-                
+                seam_mask, seam_energy = find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop, first_component=True)
+
+                base_candidates.append({
+                    'index': i,
+                    'm_crop': m_crop,
+                    'seam_mask': seam_mask,
+                    'scene_score': scene_scores[best_img_idx],
+                    'lcm_score': best_match['score'],
+                    'energy': seam_energy,
+                    'x1': x1,
+                    'y1': y1
+                })
+                print(f"  Evaluated LCM rank {i}: scene={scene_scores[best_img_idx]:.4f} "
+                      f"lcm={best_match['score']:.4f} energy={seam_energy:.4f}")
+
+            # Phase 2: Normalize and compute 4-component composite score
+            def safe_mean(vals):
+                m = sum(vals) / len(vals)
+                return m if m != 0.0 else 1.0
+
+            mean_scene  = safe_mean([c['scene_score'] for c in base_candidates])
+            mean_lcm    = safe_mean([c['lcm_score']   for c in base_candidates])
+            mean_energy = safe_mean([c['energy']       for c in base_candidates])
+
+            for c in base_candidates:
+                c['composite'] = (c['scene_score'] / mean_scene +
+                                  c['lcm_score']   / mean_lcm   +
+                                  c['energy']       / mean_energy)
+
+            base_candidates.sort(key=lambda x: x['composite'])
+
+            # Phase 3: Blend and save top 4 by composite score
+            for rank, cand in enumerate(base_candidates[:4]):
+                cv2.imwrite(f"debug_match_{rank}.png", cand['m_crop'])
+                cv2.imwrite(f"debug_seam_{rank}.png", cand['seam_mask'] * 255)
+
+                h_crop, w_crop = cand['m_crop'].shape[:2]
+                center_x = int(cand['x1'] + (w_crop / 2))
+                center_y = int(cand['y1'] + (h_crop / 2))
+
                 final_result = seamless_clone_pure(
-                src=m_crop, 
-                dst=q_bgr, 
-                mask=seam_mask, 
-                center=(center_x, center_y)
+                    src=cand['m_crop'],
+                    dst=q_bgr,
+                    mask=cand['seam_mask'],
+                    center=(center_x, center_y)
                 )
-                
-                cv2.imwrite(f"final_completed_image_{i}.png", final_result)
-            print("Base Pipeline complete! Saved all top candidates.")
+                cv2.imwrite(f"final_completed_image_{rank}.png", final_result)
+                print(f"  Saved rank {rank}: lcm_rank={cand['index']} composite={cand['composite']:.4f}")
+
+            print("Base Pipeline complete! Saved top 4 by composite score.")
         
         # root.quit()
         # root.destroy()
