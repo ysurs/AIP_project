@@ -276,7 +276,10 @@ def find_k_best_matches(query_image, mask_image, db_dir, k=10):
     visualize_gist(q_gist, 5, 6)
     
     # 2. Load ALL database features
-    db_features = load_or_compute_db_features(db_dir)
+    # Derive a cache filename from the DB folder so skyline_1024 and skyline_tiny
+    # each get their own cache file and never overwrite each other.
+    cache_file = f"db_features_{os.path.basename(db_dir.rstrip('/'))}.pkl"
+    db_features = load_or_compute_db_features(db_dir, cache_file=cache_file)
     n_images = len(db_features)
     
     if n_images == 0:

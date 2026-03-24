@@ -91,11 +91,11 @@ def lab_to_bgr_pure(img_lab):
     # 4. Scale and pure-math clip (No np.clip allowed)
     bgr = np.zeros_like(img_lab, dtype=np.float32)
     bgr[:, :, 0], bgr[:, :, 1], bgr[:, :, 2] = b * 255, g * 255, r * 255
-    
+
     # Pure arithmetic clipping to 0-255 bounds
     bgr = bgr * (bgr >= 0) + 0 * (bgr < 0)
     bgr = bgr * (bgr <= 255) + 255 * (bgr > 255)
-    
+
     return bgr.astype(np.uint8)
 
 def get_mean_std_pure(channel):
@@ -131,10 +131,10 @@ def resize_image_pure(img, new_width, new_height):
     Pure Numpy/Math implementation of cv2.resize using Bilinear Interpolation.
     """
     old_height, old_width, channels = img.shape
-    
+
     # Create an empty array for the new image
     resized = np.zeros((new_height, new_width, channels), dtype=np.float32)
-    
+
     # Calculate the scaling factors
     x_ratio = float(old_width - 1) / (new_width - 1) if new_width > 1 else 0
     y_ratio = float(old_height - 1) / (new_height - 1) if new_height > 1 else 0
@@ -142,19 +142,19 @@ def resize_image_pure(img, new_width, new_height):
     # Create grid of coordinates for the new image
     y_coords = np.arange(new_height)
     x_coords = np.arange(new_width)
-    
+
     # Map new coordinates to old coordinates
     y_old = y_coords * y_ratio
     x_old = x_coords * x_ratio
-    
+
     # Get the integer parts (top-left pixel coordinates)
     y_low = np.floor(y_old).astype(np.int32)
     x_low = np.floor(x_old).astype(np.int32)
-    
+
     # Get the bottom-right pixel coordinates (bound by max width/height)
     y_high = np.clip(y_low + 1, 0, old_height - 1)
     x_high = np.clip(x_low + 1, 0, old_width - 1)
-    
+
     # Get the decimal parts (weights for interpolation)
     y_weight = y_old - y_low
     x_weight = x_old - x_low
@@ -162,7 +162,7 @@ def resize_image_pure(img, new_width, new_height):
     # Expand weights to match channel dimensions for broadcasting
     y_weight = y_weight[:, np.newaxis, np.newaxis]
     x_weight = x_weight[np.newaxis, :, np.newaxis]
-    
+
     # Perform the Bilinear interpolation for all channels at once
     for c in range(channels):
         # Extract the 4 surrounding pixels for all points
@@ -170,18 +170,18 @@ def resize_image_pure(img, new_width, new_height):
         top_right = img[y_low[:, None], x_high, c]
         bottom_left = img[y_high[:, None], x_low, c]
         bottom_right = img[y_high[:, None], x_high, c]
-        
+
         # Calculate horizontal interpolations
         top = top_left * (1 - x_weight[:, :, 0]) + top_right * x_weight[:, :, 0]
         bottom = bottom_left * (1 - x_weight[:, :, 0]) + bottom_right * x_weight[:, :, 0]
-        
+
         # Calculate vertical interpolation
         resized[:, :, c] = top * (1 - y_weight[:, :, 0]) + bottom * y_weight[:, :, 0]
 
     # Arithmetic clip and convert back to uint8
     resized = resized * (resized >= 0) + 0 * (resized < 0)
     resized = resized * (resized <= 255) + 255 * (resized > 255)
-    
+
     return resized.astype(np.uint8)
 
 def dilate_pure(mask, kernel_size=161):
@@ -192,24 +192,24 @@ def dilate_pure(mask, kernel_size=161):
     h, w = mask.shape
     radius = kernel_size // 2
     out = np.zeros((h, w), dtype=np.uint8)
-    
+
     # Find coordinates of all white pixels
     ys, xs = np.nonzero(mask)
-    
+
     # Apply the mathematical circle equation to active regions
     for y, x in zip(ys, xs):
         y0 = max(0, y - radius)
         y1 = min(h, y + radius + 1)
         x0 = max(0, x - radius)
         x1 = min(w, x + radius + 1)
-        
+
         y_grid = np.arange(y0, y1)[:, None]
         x_grid = np.arange(x0, x1)[None, :]
-        
+
         # (x - h)^2 + (y - k)^2 <= r^2
         circle_mask = ((y_grid - y)**2 + (x_grid - x)**2) <= radius**2
         out[y0:y1, x0:x1] += circle_mask.astype(np.uint8)
-        
+
     # Cap values at 255 using pure arithmetic
     out = (out > 0) * 255
     return out.astype(np.uint8)
@@ -222,14 +222,14 @@ def bounding_rect_pure(mask):
     # Collapse the 2D array to 1D arrays to find where pixels exist
     rows = np.any(mask, axis=1)
     cols = np.any(mask, axis=0)
-    
+
     # Find the first and last True values
     ymin, ymax = np.argmax(rows), mask.shape[0] - 1 - np.argmax(rows[::-1])
     xmin, xmax = np.argmax(cols), mask.shape[1] - 1 - np.argmax(cols[::-1])
-    
+
     width = xmax - xmin + 1
     height = ymax - ymin + 1
-    
+
     return xmin, ymin, width, height
 
 def pad_reflect_pure(img, pad):
@@ -239,21 +239,21 @@ def pad_reflect_pure(img, pad):
     """
     H, W, C = img.shape
     padded = np.zeros((H + 2*pad, W + 2*pad, C), dtype=img.dtype)
-    
+
     # Insert the original image in the center
     padded[pad:pad+H, pad:pad+W] = img
-    
+
     # Reflect Top and Bottom
     padded[:pad, pad:pad+W] = img[0:pad][::-1]
     padded[pad+H:, pad:pad+W] = img[H-pad:H][::-1]
-    
+
     # Reflect Left and Right (including the corners we just made)
             # Left
     padded[:, :pad] = padded[:, pad:2*pad][:, ::-1]
 
         # Right
     padded[:, pad+W:] = padded[:, W:pad+W][:, ::-1]
-    
+
     return padded
 
 import numpy as np
@@ -266,34 +266,34 @@ def seamless_clone_pure(src, dst, mask, center):
     src_h, src_w, channels = src.shape
     dst_h, dst_w, _ = dst.shape
     center_x, center_y = center
-    
+
     # 1. Calculate ideal boundary coordinates
     top = center_y - src_h // 2
     left = center_x - src_w // 2
     bottom = top + src_h
     right = left + src_w
-    
+
     # 2. Find how much to crop from src if it spills outside dst bounds
     src_top = max(0, -top)
     src_left = max(0, -left)
     src_bottom = src_h - max(0, bottom - dst_h)
     src_right = src_w - max(0, right - dst_w)
-    
+
     # 3. Calculate safe bounds for dst (prevents negative indexing / truncation)
     dst_top = max(0, top)
     dst_left = max(0, left)
     dst_bottom = min(dst_h, bottom)
     dst_right = min(dst_w, right)
-    
+
     # 4. Slice EVERYTHING safely so shapes perfectly align
     roi = dst[dst_top:dst_bottom, dst_left:dst_right].astype(np.float32)
     src_f = src[src_top:src_bottom, src_left:src_right].astype(np.float32)
     mask_crop = mask[src_top:src_bottom, src_left:src_right]
-    
+
     # Normalize mask to boolean and expand to 3D for RGB broadcasting
     mask_bool = mask_crop > 127
     mask_3d = mask_bool[:, :, np.newaxis]
-    
+
     # Helper function to safely pad boundaries by 1 pixel (Pure slicing)
     def pad_1px(img_array):
         h, w, c = img_array.shape
@@ -308,10 +308,10 @@ def seamless_clone_pure(src, dst, mask, center):
     # Calculate the Laplacian (gradients) of the source image
     src_pad = pad_1px(src_f)
     laplacian = (4.0 * src_f) - src_pad[:-2, 1:-1] - src_pad[2:, 1:-1] - src_pad[1:-1, :-2] - src_pad[1:-1, 2:]
-    
+
     # Initialize our working blend area
     blend = roi.copy()
-    
+
     # Jacobi Iteration (The Solver)
     # NOTE: Jacobi needs O(n^2) iterations for an n-pixel-wide patch.
     # 900 = ~1% convergence for a 300px patch. Increase for better quality.
@@ -320,229 +320,103 @@ def seamless_clone_pure(src, dst, mask, center):
         b_pad = pad_1px(blend)
         b_next = (b_pad[:-2, 1:-1] + b_pad[2:, 1:-1] + b_pad[1:-1, :-2] + b_pad[1:-1, 2:] + laplacian) / 4.0
         blend = mask_3d * b_next + (~mask_3d) * roi
-        
+
     # Arithmetic clipping
     blend = blend * (blend >= 0) + 0 * (blend < 0)
     blend = blend * (blend <= 255) + 255 * (blend > 255)
-    
+
     # Paste the perfectly aligned patch back in
     out = dst.copy()
     out[dst_top:dst_bottom, dst_left:dst_right] = blend.astype(np.uint8)
-    
+
     return out
 
-def main(args):
-    global root, canvas, WIDTH, HEIGHT, ui_mask, bg_img, image_path
-    
-    root = tk.Tk()
-    root.withdraw()
-    
-    image_path = filedialog.askopenfilename(
-        title="Select Image",
-        filetypes=[("Image Files", "*.jpg *.jpeg *.png")]
-    )
-    
-    if not image_path:
-        sys.exit(0)
 
-    # 1. Resize to 1024px (The Paper's Database Standard)
-    # We use this resolution for the UI and the final output mask
-    max_dim = 1024
-    temp_png = "temp_ui_background.png"
-    
-    # -Z 1024 ensures the longest edge is 1024, matching the paper's scene matching specs
-    subprocess.run(["sips", "-Z", str(max_dim), "-s", "format", "png", image_path, "--out", temp_png], capture_output=True)
-    
-    root.deiconify()
-    bg_img = tk.PhotoImage(file=temp_png)
-    WIDTH, HEIGHT = bg_img.width(), bg_img.height()
-    root.title(f"Draw Mask (1024px Standard) - {os.path.basename(image_path)}")
+# ---------------------------------------------------------------------------
+# Pipeline (extracted from finish_drawing so both EF2 and base UI can call it)
+# ---------------------------------------------------------------------------
 
-    # 2. Initialize mask at the current (1024px) resolution
-    ui_mask = [[0 for _ in range(WIDTH)] for _ in range(HEIGHT)]
-    
-    canvas = tk.Canvas(root, width=WIDTH, height=HEIGHT, cursor="crosshair", bg="black")
-    canvas.pack()
-    canvas.create_image(0, 0, image=bg_img, anchor="nw")
+def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path, args):
+    """
+    Full scene-completion pipeline: matching → LCM → graph-cut → blending.
+    Called after the mask has been saved to disk.
 
-    def draw(event):
-        r = 20 # Brush radius
-        # Draw on the screen
-        canvas.create_oval(event.x-r, event.y-r, event.x+r, event.y+r, fill="white", outline="white")
-        # Record in the mask array
-        # for i in range(max(0, event.y-r), min(HEIGHT, event.y+r)):
-        #     for j in range(max(0, event.x-r), min(WIDTH, event.x+r)):
-        #         ui_mask[i][j] = 255
-        for i in range(max(0, event.y-r), min(HEIGHT, event.y+r)):
-            for j in range(max(0, event.x-r), min(WIDTH, event.x+r)):
-                if (i-event.y)**2 + (j-event.x)**2 <= r*r:
-                    ui_mask[i][j] = 255
+    EF3 behaviour (--use_ef3):
+      - Uses skyline_tiny/ as the matching DB instead of skyline_1024/
+      - Super-resolves each tiny matched image up to query resolution
+      - Saves an additional *_EF3_original_size.png at the original input resolution
+    """
+    from match_scenes import find_k_best_matches
 
-    def finish_drawing(event):
-        print("Saving mask at 1024px resolution...")
-        # Create image directly from the UI mask array
-        final_mask = Image.new("L", (WIDTH, HEIGHT), 0)
-        pixels = final_mask.load()
-        
-        for y in range(HEIGHT):
-            for x in range(WIDTH):
-                if ui_mask[y][x] == 255:
-                    pixels[x, y] = 255
-        
-        # Save the 1024px mask
-        output_name = "mask_1024.png"
-        final_mask.save(output_name)
-        print(f"Success: Mask saved as {output_name} ({WIDTH}x{HEIGHT})")
-        
-        # Optional: Save a 1024px version of the original image for easy matching
-        # This ensures the 'Input Image' and 'Mask' are identical sizes for the algorithm
-        os.rename(temp_png, "image_1024.png")
-        
-        #root.destroy()
-        root.quit()
-        root.destroy()
-        
-        # Import your matching function
-        from match_scenes import find_k_best_matches
-        
-        # Pass the 1024px image and mask, along with your database folder (e.g., 'beaches')
-        matches = find_k_best_matches("image_1024.png", "mask_1024.png", "skyline_1024", k=20)
-        
-        match_img_bgr_list = []
-        valid_matches = []
-        scene_scores = []
-        #print(matches)
-        for rank, (score, path, fname) in enumerate(matches, 1):
-            print(f"{rank}. {fname} (Score: {score:.4f})")
-            # exit()
-            img = cv2.imread(path)
-            if img is not None:
-                match_img_bgr_list.append(img)
-                valid_matches.append(fname)
-                scene_scores.append(score)
-        
-        print("the images")
-        print(match_img_bgr_list[0].shape,match_img_bgr_list[1].shape)
-        # exit()
-        q_bgr = cv2.imread("image_1024.png")
-        mask_gray = cv2.imread("mask_1024.png", cv2.IMREAD_GRAYSCALE)
-        local_results = match_context_optimized(q_bgr, mask_gray, match_img_bgr_list)
-        
-        print("\nLocal Context Matching Results:")
-        print(local_results)
-                
-        if args.use_ef1:
-            print("\n--- EF1: LCM + Seam Energy Ranking (ranks 1-20, skip rank 0 = same image) ---")
-            evaluated_candidates = []
-
-            # Phase 1: Evaluate LCM ranks 1-20 (skip rank 0: often the input image itself)
-            for i in range(1, min(20, len(local_results))):
-                best_match = local_results[i]
-                if best_match['placement'] is None:
-                    print(f"  Skipping LCM rank {i}: no valid placement found")
-                    continue
-                best_img_idx = best_match['match_idx']
-                best_scale, min_x, min_y = best_match['placement']
-
-                # Reload Query & Masks to get the Bounding Box
-                q_bgr = cv2.imread("image_1024.png")
-                mask_img = cv2.imread("mask_1024.png", cv2.IMREAD_GRAYSCALE)
-
-                mask_bool = mask_img > 127
-                dilated_hole = dilate_pure(mask_img, kernel_size=161)
-                context_mask = ((dilated_hole > 0) & (~mask_bool)).astype(np.uint8) * 255
-
-                coords = np.argwhere(context_mask > 0)
-                orig_y1, orig_x1 = coords[:,0].min(), coords[:,1].min()
-                orig_y2, orig_x2 = coords[:,0].max()+1, coords[:,1].max()+1
-
-                pad = 100
-                y1, x1 = max(0, orig_y1 - pad), max(0, orig_x1 - pad)
-                y2, x2 = min(q_bgr.shape[0], orig_y2 + pad), min(q_bgr.shape[1], orig_x2 + pad)
-                pad_top, pad_left = orig_y1 - y1, orig_x1 - x1
-                box_h, box_w = y2 - y1, x2 - x1
-
-                q_crop = q_bgr[y1:y2, x1:x2]
-                hole_mask_crop = mask_img[y1:y2, x1:x2]
-                context_mask_crop = context_mask[y1:y2, x1:x2]
-
-                best_img = match_img_bgr_list[best_img_idx]
-                sh, sw = int(best_img.shape[0] * best_scale), int(best_img.shape[1] * best_scale)
-                best_img_scaled = resize_image_pure(best_img, sw, sh)
-                best_img_padded = pad_reflect_pure(best_img_scaled, pad)
-
-                start_y = int(min_y) + pad - pad_top
-                start_x = int(min_x) + pad - pad_left
-                m_crop = best_img_padded[start_y : start_y + box_h, start_x : start_x + box_w]
-
-                m_crop = color_transfer(m_crop, q_crop)  # disabled for debugging
-
-                # Calculate seam and energy
-                seam_mask, seam_energy = find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop, first_component=True)
-
-                evaluated_candidates.append({
-                    'index': i,
-                    'm_crop': m_crop,
-                    'seam_mask': seam_mask,
-                    'scene_score': scene_scores[best_img_idx],
-                    'lcm_score': best_match['score'],
-                    'energy': seam_energy,
-                    'x1': x1,
-                    'y1': y1
-                })
-
-            # Phase 2: EF1 criterion = LCM (context) + seam energy (compositing quality)
-            # LCM preserves semantic/contextual understanding.
-            # Seam energy adds compositing quality that LCM alone cannot see.
-            # Equal-weighted after normalising by mean so neither dominates.
-            def safe_mean(vals):
-                m = sum(vals) / len(vals)
-                return m if m != 0.0 else 1.0
-
-            mean_lcm    = safe_mean([c['lcm_score'] for c in evaluated_candidates])
-            mean_energy = safe_mean([c['energy']    for c in evaluated_candidates])
-
-            for c in evaluated_candidates:
-                c['ef1_score'] = (c['lcm_score'] / mean_lcm +
-                                  c['energy']    / mean_energy)
-
-            evaluated_candidates.sort(key=lambda x: x['ef1_score'])
-            winner = evaluated_candidates[0]
-            print(f"\nEF1 selected LCM rank {winner['index']} | "
-                  f"lcm={winner['lcm_score']:.4f}  energy={winner['energy']:.4f}  "
-                  f"ef1_score={winner['ef1_score']:.4f}")
-            
-            # Phase 3: Blend ONLY the winner
-            # x, y, w_mask, h_mask = cv2.boundingRect(winner['seam_mask'])
-            # x, y, w_mask, h_mask = bounding_rect_pure(winner['seam_mask'])
-            # center_x = int(winner['x1'] + x + (w_mask / 2))
-            # center_y = int(winner['y1'] + y + (h_mask / 2))
-            h_crop, w_crop = winner['m_crop'].shape[:2]
-            center_x = int(winner['x1'] + (w_crop / 2))
-            center_y = int(winner['y1'] + (h_crop / 2))
-            
-            # final_result = cv2.seamlessClone(
-            #     src=winner['m_crop'], dst=q_bgr, mask=winner['seam_mask'], 
-            #     p=(center_x, center_y), flags=cv2.NORMAL_CLONE
-            # )
-            
-            final_result = seamless_clone_pure(
-                src=winner['m_crop'], 
-                dst=q_bgr, 
-                mask=winner['seam_mask'], 
-                center=(center_x, center_y)
-            )
-            
-            cv2.imwrite("final_completed_image_EF1_BEST.png", final_result)
-            print("EF1 Pipeline complete! Saved as final_completed_image_EF1_BEST.png")
-        
+    # ------------------------------------------------------------------
+    # EF3: choose DB folder
+    # ------------------------------------------------------------------
+    if args.use_ef3:
+        db_dir = "skyline_tiny"
+        if not os.path.isdir(db_dir):
+            print(f"\n[EF3] ERROR: '{db_dir}/' not found.")
+            print("[EF3] Create it first with:  python create_tiny_db.py")
+            print("[EF3] Falling back to skyline_1024/ ...")
+            db_dir = "skyline_1024"
+            args.use_ef3 = False   # disable SR step if no tiny DB
         else:
-            print("\n--- Base Pipeline: 4-Component Composite Ranking (top 20 LCM) ---")
-            base_candidates = []
+            print(f"\n[EF3] Using tiny database '{db_dir}/' with super-resolution upsampling.")
+    else:
+        db_dir = "skyline_1024"
 
-            # Phase 1: Evaluate top 20 LCM matches with graph cut
-            q_bgr = cv2.imread("image_1024.png")
-            mask_img = cv2.imread("mask_1024.png", cv2.IMREAD_GRAYSCALE)
+    matches = find_k_best_matches(image_1024_path, mask_1024_path, db_dir, k=20)
+
+    # Target dims for SR: match the 1024px query image
+    q_bgr_ref = cv2.imread(image_1024_path)
+    target_h, target_w = q_bgr_ref.shape[:2] #1024 768
+    # print(target_w, target_h)
+    # exit()
+
+    match_img_bgr_list = []
+    valid_matches = []
+    scene_scores = []
+
+    for rank, (score, path, fname) in enumerate(matches, 1):
+        print(f"{rank}. {fname} (Score: {score:.4f})")
+        img = cv2.imread(path)
+        if img is not None:
+            if args.use_ef3:
+                # Third-party SR only in super_resolve.py
+                from super_resolve import super_resolve_image
+                print(f"   [EF3-SR] {img.shape[1]}x{img.shape[0]} → {target_w}x{target_h}")
+                img = super_resolve_image(img, target_h, target_w)
+            match_img_bgr_list.append(img)
+            valid_matches.append(fname)
+            scene_scores.append(score)
+
+    print("the images")
+    print(match_img_bgr_list[0].shape, match_img_bgr_list[1].shape)
+
+    q_bgr = cv2.imread(image_1024_path)
+    mask_gray = cv2.imread(mask_1024_path, cv2.IMREAD_GRAYSCALE)
+    local_results = match_context_optimized(q_bgr, mask_gray, match_img_bgr_list)
+
+    print("\nLocal Context Matching Results:")
+    print(local_results)
+
+    # Track output filenames for EF3 final-resize step
+    output_files = []
+
+    if args.use_ef1:
+        print("\n--- EF1: LCM + Seam Energy Ranking (ranks 1-20, skip rank 0 = same image) ---")
+        evaluated_candidates = []
+
+        for i in range(1, min(20, len(local_results))):
+            best_match = local_results[i]
+            if best_match['placement'] is None:
+                print(f"  Skipping LCM rank {i}: no valid placement found")
+                continue
+            best_img_idx = best_match['match_idx']
+            best_scale, min_x, min_y = best_match['placement']
+
+            q_bgr = cv2.imread(image_1024_path)
+            mask_img = cv2.imread(mask_1024_path, cv2.IMREAD_GRAYSCALE)
+
             mask_bool = mask_img > 127
             dilated_hole = dilate_pure(mask_img, kernel_size=161)
             context_mask = ((dilated_hole > 0) & (~mask_bool)).astype(np.uint8) * 255
@@ -550,106 +424,362 @@ def main(args):
             coords = np.argwhere(context_mask > 0)
             orig_y1, orig_x1 = coords[:,0].min(), coords[:,1].min()
             orig_y2, orig_x2 = coords[:,0].max()+1, coords[:,1].max()+1
+
             pad = 100
             y1, x1 = max(0, orig_y1 - pad), max(0, orig_x1 - pad)
             y2, x2 = min(q_bgr.shape[0], orig_y2 + pad), min(q_bgr.shape[1], orig_x2 + pad)
             pad_top, pad_left = orig_y1 - y1, orig_x1 - x1
             box_h, box_w = y2 - y1, x2 - x1
+
             q_crop = q_bgr[y1:y2, x1:x2]
             hole_mask_crop = mask_img[y1:y2, x1:x2]
             context_mask_crop = context_mask[y1:y2, x1:x2]
 
-            for i in range(min(20, len(local_results))):
-                best_match = local_results[i]
-                if best_match['placement'] is None:
-                    print(f"  Skipping LCM rank {i}: no valid placement found")
-                    continue
-                best_img_idx = best_match['match_idx']
-                best_scale, min_x, min_y = best_match['placement']
+            best_img = match_img_bgr_list[best_img_idx]
+            sh, sw = int(best_img.shape[0] * best_scale), int(best_img.shape[1] * best_scale)
+            best_img_scaled = resize_image_pure(best_img, sw, sh)
+            best_img_padded = pad_reflect_pure(best_img_scaled, pad)
 
-                best_img = match_img_bgr_list[best_img_idx]
-                sh, sw = int(best_img.shape[0] * best_scale), int(best_img.shape[1] * best_scale)
-                best_img_scaled = resize_image_pure(best_img, sw, sh)
-                best_img_padded = pad_reflect_pure(best_img_scaled, pad)
+            start_y = int(min_y) + pad - pad_top
+            start_x = int(min_x) + pad - pad_left
+            m_crop = best_img_padded[start_y : start_y + box_h, start_x : start_x + box_w]
 
-                start_y = int(min_y) + pad - pad_top
-                start_x = int(min_x) + pad - pad_left
-                m_crop = best_img_padded[start_y : start_y + box_h, start_x : start_x + box_w]
+            m_crop = color_transfer(m_crop, q_crop)
 
-                m_crop = color_transfer(m_crop, q_crop)  # disabled for debugging
+            seam_mask, seam_energy = find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop, first_component=True)
 
-                seam_mask, seam_energy = find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop, first_component=True)
+            evaluated_candidates.append({
+                'index': i,
+                'm_crop': m_crop,
+                'seam_mask': seam_mask,
+                'scene_score': scene_scores[best_img_idx],
+                'lcm_score': best_match['score'],
+                'energy': seam_energy,
+                'x1': x1,
+                'y1': y1
+            })
 
-                base_candidates.append({
-                    'index': i,
-                    'm_crop': m_crop,
-                    'seam_mask': seam_mask,
-                    'scene_score': scene_scores[best_img_idx],
-                    'lcm_score': best_match['score'],
-                    'energy': seam_energy,
-                    'x1': x1,
-                    'y1': y1
-                })
-                print(f"  Evaluated LCM rank {i}: scene={scene_scores[best_img_idx]:.4f} "
-                      f"lcm={best_match['score']:.4f} energy={seam_energy:.4f}")
+        def safe_mean(vals):
+            m = sum(vals) / len(vals)
+            return m if m != 0.0 else 1.0
 
-            # Phase 2: Normalize and compute 4-component composite score
-            def safe_mean(vals):
-                m = sum(vals) / len(vals)
-                return m if m != 0.0 else 1.0
+        mean_lcm    = safe_mean([c['lcm_score'] for c in evaluated_candidates])
+        mean_energy = safe_mean([c['energy']    for c in evaluated_candidates])
 
-            mean_scene  = safe_mean([c['scene_score'] for c in base_candidates])
-            mean_lcm    = safe_mean([c['lcm_score']   for c in base_candidates])
-            mean_energy = safe_mean([c['energy']       for c in base_candidates])
+        for c in evaluated_candidates:
+            c['ef1_score'] = (c['lcm_score'] / mean_lcm +
+                              c['energy']    / mean_energy)
 
-            for c in base_candidates:
-                c['composite'] = (c['scene_score'] / mean_scene +
-                                  c['lcm_score']   / mean_lcm   +
-                                  c['energy']       / mean_energy)
+        evaluated_candidates.sort(key=lambda x: x['ef1_score'])
+        winner = evaluated_candidates[0]
+        print(f"\nEF1 selected LCM rank {winner['index']} | "
+              f"lcm={winner['lcm_score']:.4f}  energy={winner['energy']:.4f}  "
+              f"ef1_score={winner['ef1_score']:.4f}")
 
-            base_candidates.sort(key=lambda x: x['composite'])
+        h_crop, w_crop = winner['m_crop'].shape[:2]
+        center_x = int(winner['x1'] + (w_crop / 2))
+        center_y = int(winner['y1'] + (h_crop / 2))
 
-            # Phase 3: Blend and save top 4 by composite score
-            for rank, cand in enumerate(base_candidates[:4]):
-                cv2.imwrite(f"debug_match_{rank}.png", cand['m_crop'])
-                cv2.imwrite(f"debug_seam_{rank}.png", cand['seam_mask'] * 255)
+        final_result = seamless_clone_pure(
+            src=winner['m_crop'],
+            dst=q_bgr,
+            mask=winner['seam_mask'],
+            center=(center_x, center_y)
+        )
 
-                h_crop, w_crop = cand['m_crop'].shape[:2]
-                center_x = int(cand['x1'] + (w_crop / 2))
-                center_y = int(cand['y1'] + (h_crop / 2))
+        out_name = "final_completed_image_EF1_BEST.png"
+        cv2.imwrite(out_name, final_result)
+        output_files.append(out_name)
+        print(f"EF1 Pipeline complete! Saved as {out_name}")
 
-                final_result = seamless_clone_pure(
-                    src=cand['m_crop'],
-                    dst=q_bgr,
-                    mask=cand['seam_mask'],
-                    center=(center_x, center_y)
-                )
-                cv2.imwrite(f"final_completed_image_{rank}.png", final_result)
-                print(f"  Saved rank {rank}: lcm_rank={cand['index']} composite={cand['composite']:.4f}")
+    else:
+        print("\n--- Base Pipeline: 4-Component Composite Ranking (top 20 LCM) ---")
+        base_candidates = []
 
-            print("Base Pipeline complete! Saved top 4 by composite score.")
-        
-        # root.quit()
-        # root.destroy()
-        #exit()
-        
+        q_bgr = cv2.imread(image_1024_path)
+        mask_img = cv2.imread(mask_1024_path, cv2.IMREAD_GRAYSCALE)
+        mask_bool = mask_img > 127
+        dilated_hole = dilate_pure(mask_img, kernel_size=161)
+        context_mask = ((dilated_hole > 0) & (~mask_bool)).astype(np.uint8) * 255
 
-        
-        
-    canvas.bind("<B1-Motion>", draw)
-    root.bind("q", finish_drawing)
-    
-    print("Instructions:")
-    print("1. Drag to paint the area you want to remove.")
-    print("2. Press 'q' to save the 1024px mask and exit.")
-    
+        coords = np.argwhere(context_mask > 0)
+        orig_y1, orig_x1 = coords[:,0].min(), coords[:,1].min()
+        orig_y2, orig_x2 = coords[:,0].max()+1, coords[:,1].max()+1
+        pad = 100
+        y1, x1 = max(0, orig_y1 - pad), max(0, orig_x1 - pad)
+        y2, x2 = min(q_bgr.shape[0], orig_y2 + pad), min(q_bgr.shape[1], orig_x2 + pad)
+        pad_top, pad_left = orig_y1 - y1, orig_x1 - x1
+        box_h, box_w = y2 - y1, x2 - x1
+        q_crop = q_bgr[y1:y2, x1:x2]
+        hole_mask_crop = mask_img[y1:y2, x1:x2]
+        context_mask_crop = context_mask[y1:y2, x1:x2]
+
+        for i in range(min(20, len(local_results))):
+            best_match = local_results[i]
+            if best_match['placement'] is None:
+                print(f"  Skipping LCM rank {i}: no valid placement found")
+                continue
+            best_img_idx = best_match['match_idx']
+            best_scale, min_x, min_y = best_match['placement']
+
+            best_img = match_img_bgr_list[best_img_idx]
+            sh, sw = int(best_img.shape[0] * best_scale), int(best_img.shape[1] * best_scale)
+            best_img_scaled = resize_image_pure(best_img, sw, sh)
+            best_img_padded = pad_reflect_pure(best_img_scaled, pad)
+
+            start_y = int(min_y) + pad - pad_top
+            start_x = int(min_x) + pad - pad_left
+            m_crop = best_img_padded[start_y : start_y + box_h, start_x : start_x + box_w]
+
+            m_crop = color_transfer(m_crop, q_crop)
+
+            seam_mask, seam_energy = find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop, first_component=True)
+
+            base_candidates.append({
+                'index': i,
+                'm_crop': m_crop,
+                'seam_mask': seam_mask,
+                'scene_score': scene_scores[best_img_idx],
+                'lcm_score': best_match['score'],
+                'energy': seam_energy,
+                'x1': x1,
+                'y1': y1
+            })
+            print(f"  Evaluated LCM rank {i}: scene={scene_scores[best_img_idx]:.4f} "
+                  f"lcm={best_match['score']:.4f} energy={seam_energy:.4f}")
+
+        def safe_mean(vals):
+            m = sum(vals) / len(vals)
+            return m if m != 0.0 else 1.0
+
+        mean_scene  = safe_mean([c['scene_score'] for c in base_candidates])
+        mean_lcm    = safe_mean([c['lcm_score']   for c in base_candidates])
+        mean_energy = safe_mean([c['energy']       for c in base_candidates])
+
+        for c in base_candidates:
+            c['composite'] = (c['scene_score'] / mean_scene +
+                              c['lcm_score']   / mean_lcm   +
+                              c['energy']       / mean_energy)
+
+        base_candidates.sort(key=lambda x: x['composite'])
+
+        for rank, cand in enumerate(base_candidates[:4]):
+            cv2.imwrite(f"debug_match_{rank}.png", cand['m_crop'])
+            cv2.imwrite(f"debug_seam_{rank}.png", cand['seam_mask'] * 255)
+
+            h_crop, w_crop = cand['m_crop'].shape[:2]
+            center_x = int(cand['x1'] + (w_crop / 2))
+            center_y = int(cand['y1'] + (h_crop / 2))
+
+            final_result = seamless_clone_pure(
+                src=cand['m_crop'],
+                dst=q_bgr,
+                mask=cand['seam_mask'],
+                center=(center_x, center_y)
+            )
+            out_name = f"final_completed_image_{rank}.png"
+            cv2.imwrite(out_name, final_result)
+            output_files.append(out_name)
+            print(f"  Saved rank {rank}: lcm_rank={cand['index']} composite={cand['composite']:.4f}")
+
+        print("Base Pipeline complete! Saved top 4 by composite score.")
+
+    # ------------------------------------------------------------------
+    # EF3 final step: resize completed outputs to original input resolution.
+    # The input image is NOT super-resolved – we just go back to its original
+    # dimensions using high-quality PIL LANCZOS (plain resize, not SR).
+    # ------------------------------------------------------------------
+    if args.use_ef3 and output_files:
+        orig_pil = Image.open(original_image_path)
+        orig_w, orig_h = orig_pil.size
+        print(f"\n[EF3] Resizing output(s) to original input size: {orig_w}x{orig_h}")
+
+        for fname in output_files:
+            completed_bgr = cv2.imread(fname)
+            if completed_bgr is None:
+                continue
+            # Pure PIL resize – input is NOT super-resolved
+            completed_rgb = completed_bgr[:, :, ::-1]
+            pil_out = Image.fromarray(completed_rgb.astype(np.uint8))
+            pil_out = pil_out.resize((orig_w, orig_h), Image.Resampling.LANCZOS)
+            out_bgr = np.array(pil_out)[:, :, ::-1]
+            ef3_name = fname.replace('.png', '_EF3_original_size.png')
+            cv2.imwrite(ef3_name, out_bgr)
+            print(f"  [EF3] Saved at original size: {ef3_name}")
+
+
+# ---------------------------------------------------------------------------
+# Main: UI
+# ---------------------------------------------------------------------------
+
+def main(args):
+    global root, canvas, WIDTH, HEIGHT, bg_img, image_path
+
+    root = tk.Tk()
+    root.withdraw()
+
+    image_path = filedialog.askopenfilename(
+        title="Select Image",
+        filetypes=[("Image Files", "*.jpg *.jpeg *.png")]
+    )
+
+    if not image_path:
+        sys.exit(0)
+
+    # 1. Resize to 1024px for UI / feature matching
+    max_dim = 1024
+    temp_png = "temp_ui_background.png"
+
+    subprocess.run(["sips", "-Z", str(max_dim), "-s", "format", "png",
+                    image_path, "--out", temp_png], capture_output=True)
+
+    root.deiconify()
+    bg_img = tk.PhotoImage(file=temp_png)
+    WIDTH, HEIGHT = bg_img.width(), bg_img.height()
+    root.title(f"Draw Mask (1024px Standard) - {os.path.basename(image_path)}")
+
+    canvas = tk.Canvas(root, width=WIDTH, height=HEIGHT, cursor="crosshair", bg="black")
+    canvas.pack()
+    canvas.create_image(0, 0, image=bg_img, anchor="nw")
+
+    # ------------------------------------------------------------------
+    # EF2: click-to-segment UI
+    # ------------------------------------------------------------------
+    if args.use_ef2:
+        from PIL import ImageTk as PILImageTk
+
+        from ef2_segmentation import (
+            load_sam_predictor,
+            predict_mask_at_point,
+            merge_masks_pure,
+            remove_mask_at_point_pure,
+            render_overlay_pure,
+        )
+
+        # Load image as numpy array for overlay compositing (pure numpy)
+        bg_pil = Image.open(temp_png).convert('RGB')
+        bg_array_rgb = np.array(bg_pil)   # (H, W, 3) uint8, RGB
+
+        # Load SAM predictor (third-party call lives inside ef2_segmentation.py)
+        img_bgr_for_sam = bg_array_rgb[:, :, ::-1].copy()
+        try:
+            predictor = load_sam_predictor(img_bgr_for_sam)
+        except (FileNotFoundError, ImportError) as e:
+            print(f"\n[EF2] {e}\n")
+            sys.exit(1)
+
+        # State: list of bool (H, W) masks, one per click
+        mask_list = []
+        # Mutable container to prevent tkinter GC of PhotoImage
+        tk_img_holder = [None]
+
+        def render_overlay():
+            """Recomposite and redisplay canvas with current mask overlay. Pure numpy."""
+            combined = merge_masks_pure(mask_list, HEIGHT, WIDTH)
+            overlay_rgb = render_overlay_pure(bg_array_rgb, combined, alpha=0.55)
+            photo = PILImageTk.PhotoImage(Image.fromarray(overlay_rgb))
+            tk_img_holder[0] = photo          # keep reference alive
+            canvas.create_image(0, 0, image=photo, anchor="nw")
+
+        def on_left_click(event):
+            """Left-click: run SAM at click point and add the segment to the mask."""
+            print(f"[EF2] Segmenting at ({event.x}, {event.y}) ...")
+            mask = predict_mask_at_point(predictor, event.x, event.y, HEIGHT, WIDTH)
+            mask_list.append(mask)
+            render_overlay()
+
+        def on_right_click(event):
+            """Right-click: remove any segment that covers the clicked pixel. Pure Python."""
+            mask_list[:] = remove_mask_at_point_pure(mask_list, event.x, event.y)
+            render_overlay()
+
+        def on_clear(event):
+            """'c' key: clear all segments. Pure Python."""
+            mask_list.clear()
+            render_overlay()
+
+        def finish_drawing_ef2(event):
+            """'q' key: save combined SAM mask and launch the pipeline."""
+            if not mask_list:
+                print("[EF2] No regions selected. Click on objects first.")
+                return
+
+            print("[EF2] Saving segmentation mask ...")
+            # merge_masks_pure is pure numpy – no third-party
+            combined = merge_masks_pure(mask_list, HEIGHT, WIDTH)
+            pil_mask = Image.fromarray(combined, mode='L')
+            pil_mask.save("mask_1024.png")
+            print(f"[EF2] Mask saved: mask_1024.png ({WIDTH}x{HEIGHT})")
+
+            os.rename(temp_png, "image_1024.png")
+            root.quit()
+            root.destroy()
+            run_completion_pipeline("image_1024.png", "mask_1024.png", image_path, args)
+
+        canvas.bind("<Button-1>", on_left_click)
+        canvas.bind("<Button-3>", on_right_click)
+        root.bind("c", on_clear)
+        root.bind("q", finish_drawing_ef2)
+
+        print("\nEF2 Instructions:")
+        print("  Left-click  : segment the clicked object/region (adds to mask)")
+        print("  Right-click : remove segment at that point")
+        print("  'c'         : clear all segments")
+        print("  'q'         : confirm mask and run completion pipeline")
+
+    # ------------------------------------------------------------------
+    # Base UI: free-hand brush painting
+    # ------------------------------------------------------------------
+    else:
+        # 2. Initialize mask at the current (1024px) resolution
+        ui_mask = [[0 for _ in range(WIDTH)] for _ in range(HEIGHT)]
+
+        def draw(event):
+            r = 20  # Brush radius
+            canvas.create_oval(event.x-r, event.y-r, event.x+r, event.y+r,
+                               fill="white", outline="white")
+            for i in range(max(0, event.y-r), min(HEIGHT, event.y+r)):
+                for j in range(max(0, event.x-r), min(WIDTH, event.x+r)):
+                    if (i-event.y)**2 + (j-event.x)**2 <= r*r:
+                        ui_mask[i][j] = 255
+
+        def finish_drawing(event):
+            print("Saving mask at 1024px resolution...")
+            final_mask = Image.new("L", (WIDTH, HEIGHT), 0)
+            pixels = final_mask.load()
+
+            for y in range(HEIGHT):
+                for x in range(WIDTH):
+                    if ui_mask[y][x] == 255:
+                        pixels[x, y] = 255
+
+            output_name = "mask_1024.png"
+            final_mask.save(output_name)
+            print(f"Success: Mask saved as {output_name} ({WIDTH}x{HEIGHT})")
+
+            os.rename(temp_png, "image_1024.png")
+            root.quit()
+            root.destroy()
+            run_completion_pipeline("image_1024.png", "mask_1024.png", image_path, args)
+
+        canvas.bind("<B1-Motion>", draw)
+        root.bind("q", finish_drawing)
+
+        print("Instructions:")
+        print("1. Drag to paint the area you want to remove.")
+        print("2. Press 'q' to save the 1024px mask and exit.")
+
     root.mainloop()
 
+
 if __name__ == "__main__":
-    # main()
     parser = argparse.ArgumentParser(description="Scene Completion Pipeline")
-    parser.add_argument('--use_ef1', action='store_true', help='Enable Automatic Ranking (EF1)')
-    
+    parser.add_argument('--use_ef1', action='store_true',
+                        help='EF1: Enable LCM + seam-energy automatic ranking')
+    parser.add_argument('--use_ef2', action='store_true',
+                        help='EF2: Use SAM click-to-segment mask painting interface')
+    parser.add_argument('--use_ef3', action='store_true',
+                        help='EF3: Match against tiny DB and super-resolve matches')
+
     args = parser.parse_args()
-    
     main(args)
