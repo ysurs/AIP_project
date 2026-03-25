@@ -635,7 +635,7 @@ def compute_gist(image_path, mask_path=None, scales=5, orientations=6, blocks=4)
                     img_list[r][c] = mean_val
 
         # Smooth diffusion (replacing scipy gaussian_filter)
-        for _ in range(10): # Reduced iterations from 20 for pure-python speed
+        for _ in range(20): # Reduced iterations from 20 for pure-python speed
             blurred_img = pure_python_gaussian_blur(img_list, sigma=2)
             for r in range(height):
                 for c in range(width):
@@ -734,7 +734,7 @@ def visualize_gist(gist_data, scales, orientations):
 
     # Labels
     fig.text(0.5, 0.05, 'Edge Orientation', ha='center', color='white', fontsize=18)
-    fig.text(0.07, 0.5, 'Frequency (Low to High)', va='center', rotation='vertical', color='white', fontsize=18)
+    fig.text(0.07, 0.5, 'Frequency (High to Low)', va='center', rotation='vertical', color='white', fontsize=18)
     
     cax = fig.add_subplot(gs[0:scales, -1])
     plt.colorbar(im, cax=cax, label='Activation (Energy)')
