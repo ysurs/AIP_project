@@ -315,7 +315,7 @@ def seamless_clone_pure(src, dst, mask, center):
     # Jacobi Iteration (The Solver)
     # NOTE: Jacobi needs O(n^2) iterations for an n-pixel-wide patch.
     # 900 = ~1% convergence for a 300px patch. Increase for better quality.
-    iterations = 5000
+    iterations = 20000
     for _ in range(iterations):
         b_pad = pad_1px(blend)
         b_next = (b_pad[:-2, 1:-1] + b_pad[2:, 1:-1] + b_pad[1:-1, :-2] + b_pad[1:-1, 2:] + laplacian) / 4.0
@@ -363,38 +363,53 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
             print(f"\n[EF3] Using tiny database '{db_dir}/' with super-resolution upsampling.")
     else:
         db_dir = "skyline_1024"
+        
+    print(f"\n[Step 3] Finding k={20} best matches in '{db_dir}/' for the query image and mask...")
 
     matches = find_k_best_matches(image_1024_path, mask_1024_path, db_dir, k=20)
-
-    # Target dims for SR: match the 1024px query image
-    q_bgr_ref = cv2.imread(image_1024_path)
-    target_h, target_w = q_bgr_ref.shape[:2] #1024 768
-    # print(target_w, target_h)
-    # exit()
 
     match_img_bgr_list = []
     valid_matches = []
     scene_scores = []
 
+    # Step 4: Load k matched images (tiny if EF3, full-res otherwise) — NO SR yet
     for rank, (score, path, fname) in enumerate(matches, 1):
         print(f"{rank}. {fname} (Score: {score:.4f})")
         img = cv2.imread(path)
         if img is not None:
-            if args.use_ef3:
-                # Third-party SR only in super_resolve.py
-                from super_resolve import super_resolve_image
-                print(f"   [EF3-SR] {img.shape[1]}x{img.shape[0]} → {target_w}x{target_h}")
-                img = super_resolve_image(img, target_h, target_w)
             match_img_bgr_list.append(img)
             valid_matches.append(fname)
             scene_scores.append(score)
 
-    print("the images")
-    print(match_img_bgr_list[0].shape, match_img_bgr_list[1].shape)
-
     q_bgr = cv2.imread(image_1024_path)
     mask_gray = cv2.imread(mask_1024_path, cv2.IMREAD_GRAYSCALE)
-    local_results = match_context_optimized(q_bgr, mask_gray, match_img_bgr_list)
+
+    if args.use_ef3:
+        # EF3 Step 6:
+        # Tiny images are too small to run LCM against the 1024 query context
+        # (the context template is larger than the tiny image at any scale).
+        # So: select top-m by GIST score (Step 4 already ranked them), SR those
+        # m images to full 1024 resolution, then run LCM on the SR'd images
+        # — this is the "refine alignment" step the spec describes.
+        from super_resolve import super_resolve_image
+        target_h, target_w = q_bgr.shape[:2]
+        top_m = min(5, len(match_img_bgr_list))
+
+        print(f"\n[EF3 Step 6] Super-resolving top {top_m} GIST-ranked tiny images → {target_w}x{target_h}")
+        sr_img_list = []
+        for i in range(top_m):
+            tiny = match_img_bgr_list[i]
+            print(f"   [EF3-SR] rank {i+1}: {tiny.shape[1]}x{tiny.shape[0]} → {target_w}x{target_h}")
+            sr_img_list.append(super_resolve_image(tiny, target_h, target_w))
+
+        print(f"\n[EF3 Step 6] Refining alignment via LCM on SR'd full-res images...")
+        local_results = match_context_optimized(q_bgr, mask_gray, sr_img_list)
+        scene_scores = scene_scores[:top_m]
+        match_img_bgr_list = sr_img_list
+    else:
+        # Step 5: LCM on full-res DB images
+        print("\n[Step 5] Running LCM on matched images...")
+        local_results = match_context_optimized(q_bgr, mask_gray, match_img_bgr_list)
 
     print("\nLocal Context Matching Results:")
     print(local_results)
@@ -563,7 +578,7 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
 
         base_candidates.sort(key=lambda x: x['composite'])
 
-        for rank, cand in enumerate(base_candidates[:4]):
+        for rank, cand in enumerate(base_candidates[:10]):
             cv2.imwrite(f"debug_match_{rank}.png", cand['m_crop'])
             cv2.imwrite(f"debug_seam_{rank}.png", cand['seam_mask'] * 255)
 
