@@ -315,7 +315,7 @@ def seamless_clone_pure(src, dst, mask, center):
     # Jacobi Iteration (The Solver)
     # NOTE: Jacobi needs O(n^2) iterations for an n-pixel-wide patch.
     # 900 = ~1% convergence for a 300px patch. Increase for better quality.
-    iterations = 20000
+    iterations = 90000
     for _ in range(iterations):
         b_pad = pad_1px(blend)
         b_next = (b_pad[:-2, 1:-1] + b_pad[2:, 1:-1] + b_pad[1:-1, :-2] + b_pad[1:-1, 2:] + laplacian) / 4.0
@@ -392,20 +392,61 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
         # m images to full 1024 resolution, then run LCM on the SR'd images
         # — this is the "refine alignment" step the spec describes.
         from super_resolve import super_resolve_image
-        target_h, target_w = q_bgr.shape[:2]
+        tiny_h, tiny_w = match_img_bgr_list[0].shape[:2]
+        print(f"\n[EF3 Step 5] Top matched image size: {tiny_w}x{tiny_h}")
         top_m = min(5, len(match_img_bgr_list))
+        
+        print(f"\n[EF3 Step 5] Downsampling input to {tiny_w}x{tiny_h} for coarse alignment...")
+        q_bgr_tiny = resize_image_pure(q_bgr, tiny_w, tiny_h)
+        mask_tiny = resize_image_pure(mask_gray, tiny_w, tiny_h)
+        
+        # Run LCM on the k tiny images to find the best m
+        coarse_results = match_context_optimized(q_bgr_tiny, mask_tiny, match_img_bgr_list)
+        
+        # Sort and select the top m matches (e.g., top 5)
+        # Assuming lower LCM score is better (distance metric)
+        coarse_results.sort(key=lambda x: x['score'])
+        top_m = min(5, len(coarse_results))
+        
+        best_m_indices = []
+        for res in coarse_results[:top_m]:
+            # We must skip candidates that completely failed alignment
+            if res['placement'] is not None:
+                best_m_indices.append(res['match_idx'])
 
-        print(f"\n[EF3 Step 6] Super-resolving top {top_m} GIST-ranked tiny images → {target_w}x{target_h}")
+        # print(f"\n[EF3 Step 6] Super-resolving top {top_m} GIST-ranked tiny images → {target_w}x{target_h}")
+        # sr_img_list = []
+        # for i in range(top_m):
+        #     tiny = match_img_bgr_list[i]
+        #     print(f"   [EF3-SR] rank {i+1}: {tiny.shape[1]}x{tiny.shape[0]} → {target_w}x{target_h}")
+        #     sr_img_list.append(super_resolve_image(tiny, target_h, target_w))
+
+        # print(f"\n[EF3 Step 6] Refining alignment via LCM on SR'd full-res images...")
+        # local_results = match_context_optimized(q_bgr, mask_gray, sr_img_list)
+        # scene_scores = scene_scores[:top_m]
+        # match_img_bgr_list = sr_img_list
+        # ------------------------------------------------------------------
+        # EF3 Step 6: Super-Resolve ONLY the top m candidates
+        # ------------------------------------------------------------------
+        from super_resolve import super_resolve_image
+        target_h, target_w = q_bgr.shape[:2]
+        
+        print(f"\n[EF3 Step 6] Super-resolving the top {len(best_m_indices)} coarse matches → {target_w}x{target_h}")
         sr_img_list = []
-        for i in range(top_m):
-            tiny = match_img_bgr_list[i]
-            print(f"   [EF3-SR] rank {i+1}: {tiny.shape[1]}x{tiny.shape[0]} → {target_w}x{target_h}")
+        for idx in best_m_indices:
+            tiny = match_img_bgr_list[idx]
+            print(f"   [EF3-SR] Upsampling original rank {idx+1}")
             sr_img_list.append(super_resolve_image(tiny, target_h, target_w))
-
-        print(f"\n[EF3 Step 6] Refining alignment via LCM on SR'd full-res images...")
+            
+        # ------------------------------------------------------------------
+        # EF3 Refine Alignment: Run LCM on the full-res SR images
+        # ------------------------------------------------------------------
+        print(f"\n[EF3] Refining alignment via LCM on SR'd full-res images...")
         local_results = match_context_optimized(q_bgr, mask_gray, sr_img_list)
-        scene_scores = scene_scores[:top_m]
+        
+        # Override the pipeline variables so the downstream code works seamlessly
         match_img_bgr_list = sr_img_list
+        scene_scores = [scene_scores[idx] for idx in best_m_indices]
     else:
         # Step 5: LCM on full-res DB images
         print("\n[Step 5] Running LCM on matched images...")
@@ -421,12 +462,17 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
         print("\n--- EF1: LCM + Seam Energy Ranking (ranks 1-20, skip rank 0 = same image) ---")
         evaluated_candidates = []
 
+        seen_img_indices = set()
         for i in range(1, min(20, len(local_results))):
             best_match = local_results[i]
             if best_match['placement'] is None:
                 print(f"  Skipping LCM rank {i}: no valid placement found")
                 continue
             best_img_idx = best_match['match_idx']
+            if best_img_idx in seen_img_indices:
+                print(f"  Skipping LCM rank {i}: duplicate image (match_idx={best_img_idx})")
+                continue
+            seen_img_indices.add(best_img_idx)
             best_scale, min_x, min_y = best_match['placement']
 
             q_bgr = cv2.imread(image_1024_path)
@@ -529,12 +575,17 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
         hole_mask_crop = mask_img[y1:y2, x1:x2]
         context_mask_crop = context_mask[y1:y2, x1:x2]
 
+        seen_img_indices = set()
         for i in range(min(20, len(local_results))):
             best_match = local_results[i]
             if best_match['placement'] is None:
                 print(f"  Skipping LCM rank {i}: no valid placement found")
                 continue
             best_img_idx = best_match['match_idx']
+            if best_img_idx in seen_img_indices:
+                print(f"  Skipping LCM rank {i}: duplicate image (match_idx={best_img_idx})")
+                continue
+            seen_img_indices.add(best_img_idx)
             best_scale, min_x, min_y = best_match['placement']
 
             best_img = match_img_bgr_list[best_img_idx]
@@ -630,23 +681,61 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
 def main(args):
     global root, canvas, WIDTH, HEIGHT, bg_img, image_path
 
+    max_dim = 1024
+    temp_png = "temp_ui_background.png"
+
+    # ------------------------------------------------------------------
+    # Fast path: both --image and --mask supplied → no UI needed at all
+    # ------------------------------------------------------------------
+    if args.image and args.mask:
+        image_path = args.image
+        subprocess.run(["sips", "-Z", str(max_dim), "-s", "format", "png",
+                        image_path, "--out", "image_1024.png"], capture_output=True)
+        img_1024 = Image.open("image_1024.png")
+        w, h = img_1024.size
+        mask_pil = Image.open(args.mask).convert("L")
+        if mask_pil.size != (w, h):
+            print(f"Resizing mask from {mask_pil.size} → ({w}, {h})...")
+            mask_pil = mask_pil.resize((w, h), Image.NEAREST)
+        mask_pil.save("mask_1024.png")
+        print(f"Using pre-existing mask: {args.mask}")
+        run_completion_pipeline("image_1024.png", "mask_1024.png", image_path, args)
+        return
+
     root = tk.Tk()
     root.withdraw()
 
-    image_path = filedialog.askopenfilename(
-        title="Select Image",
-        filetypes=[("Image Files", "*.jpg *.jpeg *.png")]
-    )
+    if args.image:
+        image_path = args.image
+    else:
+        image_path = filedialog.askopenfilename(
+            title="Select Image",
+            filetypes=[("Image Files", "*.jpg *.jpeg *.png")]
+        )
 
     if not image_path:
         sys.exit(0)
 
     # 1. Resize to 1024px for UI / feature matching
-    max_dim = 1024
-    temp_png = "temp_ui_background.png"
-
     subprocess.run(["sips", "-Z", str(max_dim), "-s", "format", "png",
                     image_path, "--out", temp_png], capture_output=True)
+
+    # ------------------------------------------------------------------
+    # If --mask is provided, skip drawing UI and go straight to pipeline
+    # ------------------------------------------------------------------
+    if args.mask:
+        img_1024 = Image.open(temp_png)
+        w, h = img_1024.size
+        mask_pil = Image.open(args.mask).convert("L")
+        if mask_pil.size != (w, h):
+            print(f"Resizing mask from {mask_pil.size} → ({w}, {h})...")
+            mask_pil = mask_pil.resize((w, h), Image.NEAREST)
+        mask_pil.save("mask_1024.png")
+        os.rename(temp_png, "image_1024.png")
+        root.destroy()
+        print(f"Using pre-existing mask: {args.mask}")
+        run_completion_pipeline("image_1024.png", "mask_1024.png", image_path, args)
+        return
 
     root.deiconify()
     bg_img = tk.PhotoImage(file=temp_png)
@@ -795,6 +884,10 @@ if __name__ == "__main__":
                         help='EF2: Use SAM click-to-segment mask painting interface')
     parser.add_argument('--use_ef3', action='store_true',
                         help='EF3: Match against tiny DB and super-resolve matches')
+    parser.add_argument('--image', type=str, default=None,
+                        help='Path to input image (skips the file-selection dialog)')
+    parser.add_argument('--mask', type=str, default=None,
+                        help='Path to an existing mask PNG (skips the drawing UI)')
 
     args = parser.parse_args()
     main(args)
