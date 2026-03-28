@@ -333,6 +333,93 @@ def seamless_clone_pure(src, dst, mask, center):
 
 
 # ---------------------------------------------------------------------------
+# EF1 helper metrics  (pure Python inside; numpy only for array indexing)
+# ---------------------------------------------------------------------------
+
+def boundary_gradient_coherence(q_crop, m_crop, seam_mask):
+    """
+    Mean absolute difference of gradient magnitudes at the seam boundary ring.
+    Lower = smoother boundary.  Pure Python loops over boundary pixels only.
+    """
+    H, W = seam_mask.shape
+
+    # Collect boundary pixels: seam pixels that have at least one 0-neighbour
+    boundary = []
+    for y in range(1, H - 1):
+        for x in range(1, W - 1):
+            if seam_mask[y, x] > 0:
+                if (seam_mask[y-1, x] == 0 or seam_mask[y+1, x] == 0 or
+                        seam_mask[y, x-1] == 0 or seam_mask[y, x+1] == 0):
+                    boundary.append((y, x))
+
+    if not boundary:
+        return 0.0
+
+    def lum(img, py, px):
+        return (0.114 * float(img[py, px, 0]) +
+                0.587 * float(img[py, px, 1]) +
+                0.299 * float(img[py, px, 2]))
+
+    total_diff = 0.0
+    for (y, x) in boundary:
+        gx_q = (lum(q_crop, y, x+1) - lum(q_crop, y, x-1)) * 0.5
+        gy_q = (lum(q_crop, y+1, x) - lum(q_crop, y-1, x)) * 0.5
+        gq   = (gx_q*gx_q + gy_q*gy_q) ** 0.5
+
+        gx_m = (lum(m_crop, y, x+1) - lum(m_crop, y, x-1)) * 0.5
+        gy_m = (lum(m_crop, y+1, x) - lum(m_crop, y-1, x)) * 0.5
+        gm   = (gx_m*gx_m + gy_m*gy_m) ** 0.5
+
+        diff = gq - gm
+        total_diff += diff if diff >= 0 else -diff
+
+    return total_diff / len(boundary)
+
+
+def context_ncc(q_crop, m_crop, context_mask_crop):
+    """
+    Normalised Cross-Correlation between query and patch in the context ring.
+    Returns (1 - NCC) so that lower = better.  Pure Python loops.
+    """
+    H, W = context_mask_crop.shape[:2]
+
+    q_vals = []
+    m_vals = []
+    for y in range(H):
+        for x in range(W):
+            if context_mask_crop[y, x] > 0:
+                q_v = (float(q_crop[y, x, 0]) + float(q_crop[y, x, 1]) + float(q_crop[y, x, 2])) / 3.0
+                m_v = (float(m_crop[y, x, 0]) + float(m_crop[y, x, 1]) + float(m_crop[y, x, 2])) / 3.0
+                q_vals.append(q_v)
+                m_vals.append(m_v)
+
+    n = len(q_vals)
+    if n < 2:
+        return 0.0
+
+    q_mean = sum(q_vals) / n
+    m_mean = sum(m_vals) / n
+
+    numerator = 0.0
+    denom_q   = 0.0
+    denom_m   = 0.0
+    for i in range(n):
+        qc = q_vals[i] - q_mean
+        mc = m_vals[i] - m_mean
+        numerator += qc * mc
+        denom_q   += qc * qc
+        denom_m   += mc * mc
+
+    denom = (denom_q ** 0.5) * (denom_m ** 0.5)
+    if denom < 1e-9:
+        return 0.0
+
+    ncc = numerator / denom
+    ncc = min(1.0, max(-1.0, ncc))
+    return 1.0 - ncc   # lower = better
+
+
+# ---------------------------------------------------------------------------
 # Pipeline (extracted from finish_drawing so both EF2 and base UI can call it)
 # ---------------------------------------------------------------------------
 
@@ -385,68 +472,35 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
     mask_gray = cv2.imread(mask_1024_path, cv2.IMREAD_GRAYSCALE)
 
     if args.use_ef3:
-        # EF3 Step 6:
-        # Tiny images are too small to run LCM against the 1024 query context
-        # (the context template is larger than the tiny image at any scale).
-        # So: select top-m by GIST score (Step 4 already ranked them), SR those
-        # m images to full 1024 resolution, then run LCM on the SR'd images
-        # — this is the "refine alignment" step the spec describes.
-        from super_resolve import super_resolve_image
-        tiny_h, tiny_w = match_img_bgr_list[0].shape[:2]
-        print(f"\n[EF3 Step 5] Top matched image size: {tiny_w}x{tiny_h}")
-        top_m = min(5, len(match_img_bgr_list))
-        
-        print(f"\n[EF3 Step 5] Downsampling input to {tiny_w}x{tiny_h} for coarse alignment...")
-        q_bgr_tiny = resize_image_pure(q_bgr, tiny_w, tiny_h)
-        mask_tiny = resize_image_pure(mask_gray, tiny_w, tiny_h)
-        
-        # Run LCM on the k tiny images to find the best m
-        coarse_results = match_context_optimized(q_bgr_tiny, mask_tiny, match_img_bgr_list)
-        
-        # Sort and select the top m matches (e.g., top 5)
-        # Assuming lower LCM score is better (distance metric)
-        coarse_results.sort(key=lambda x: x['score'])
-        top_m = min(5, len(coarse_results))
-        
-        best_m_indices = []
-        for res in coarse_results[:top_m]:
-            # We must skip candidates that completely failed alignment
-            if res['placement'] is not None:
-                best_m_indices.append(res['match_idx'])
-
-        # print(f"\n[EF3 Step 6] Super-resolving top {top_m} GIST-ranked tiny images → {target_w}x{target_h}")
-        # sr_img_list = []
-        # for i in range(top_m):
-        #     tiny = match_img_bgr_list[i]
-        #     print(f"   [EF3-SR] rank {i+1}: {tiny.shape[1]}x{tiny.shape[0]} → {target_w}x{target_h}")
-        #     sr_img_list.append(super_resolve_image(tiny, target_h, target_w))
-
-        # print(f"\n[EF3 Step 6] Refining alignment via LCM on SR'd full-res images...")
-        # local_results = match_context_optimized(q_bgr, mask_gray, sr_img_list)
-        # scene_scores = scene_scores[:top_m]
-        # match_img_bgr_list = sr_img_list
-        # ------------------------------------------------------------------
-        # EF3 Step 6: Super-Resolve ONLY the top m candidates
-        # ------------------------------------------------------------------
+        # EF3 per spec:
+        # 1. Take top-m by GIST score (already ranked by find_k_best_matches)
+        # 2. SR each tiny image to full query resolution
+        # 3. Refine alignment: run LCM on SR'd full-res images vs full-res input
+        # Input image is NEVER downsampled.
         from super_resolve import super_resolve_image
         target_h, target_w = q_bgr.shape[:2]
-        
-        print(f"\n[EF3 Step 6] Super-resolving the top {len(best_m_indices)} coarse matches → {target_w}x{target_h}")
+        top_m = min(7, len(match_img_bgr_list))
+        first_tiny = match_img_bgr_list[0]
+
+        print(f"\n[EF3 Step 5] Top matched tiny image size: {first_tiny.shape[1]}x{first_tiny.shape[0]}")
+        print(f"[EF3 Step 6] Super-resolving top {top_m} GIST-ranked tiny images (preserving aspect ratio)...")
         sr_img_list = []
-        for idx in best_m_indices:
-            tiny = match_img_bgr_list[idx]
-            print(f"   [EF3-SR] Upsampling original rank {idx+1}")
-            sr_img_list.append(super_resolve_image(tiny, target_h, target_w))
-            
-        # ------------------------------------------------------------------
-        # EF3 Refine Alignment: Run LCM on the full-res SR images
-        # ------------------------------------------------------------------
-        print(f"\n[EF3] Refining alignment via LCM on SR'd full-res images...")
+        for i in range(top_m):
+            tiny = match_img_bgr_list[i]
+            # Scale by width ratio so each image keeps its own aspect ratio.
+            # tiny DB was created with longest-edge=256, so heights vary per image.
+            # Forcing all to target_h would distort content and corrupt blending.
+            scale = target_w / tiny.shape[1]
+            sr_h = int(tiny.shape[0] * scale)
+            sr_w = target_w
+            print(f"   [EF3-SR] rank {i+1}: {tiny.shape[1]}x{tiny.shape[0]} → {sr_w}x{sr_h}")
+            sr_img_list.append(super_resolve_image(tiny, sr_h, sr_w))
+
+        print(f"\n[EF3] Refining alignment via LCM on SR'd full-res images (input unchanged)...")
         local_results = match_context_optimized(q_bgr, mask_gray, sr_img_list)
-        
-        # Override the pipeline variables so the downstream code works seamlessly
+
         match_img_bgr_list = sr_img_list
-        scene_scores = [scene_scores[idx] for idx in best_m_indices]
+        scene_scores = scene_scores[:top_m]
     else:
         # Step 5: LCM on full-res DB images
         print("\n[Step 5] Running LCM on matched images...")
@@ -509,6 +563,9 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
 
             seam_mask, seam_energy = find_optimal_seam(q_crop, m_crop, hole_mask_crop, context_mask_crop, first_component=True)
 
+            coherence   = boundary_gradient_coherence(q_crop, m_crop, seam_mask)
+            ncc_penalty = context_ncc(q_crop, m_crop, context_mask_crop)
+
             evaluated_candidates.append({
                 'index': i,
                 'm_crop': m_crop,
@@ -516,6 +573,8 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
                 'scene_score': scene_scores[best_img_idx],
                 'lcm_score': best_match['score'],
                 'energy': seam_energy,
+                'coherence': coherence,
+                'ncc_penalty': ncc_penalty,
                 'x1': x1,
                 'y1': y1
             })
@@ -524,17 +583,22 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
             m = sum(vals) / len(vals)
             return m if m != 0.0 else 1.0
 
-        mean_lcm    = safe_mean([c['lcm_score'] for c in evaluated_candidates])
-        mean_energy = safe_mean([c['energy']    for c in evaluated_candidates])
+        mean_lcm        = safe_mean([c['lcm_score']    for c in evaluated_candidates])
+        mean_energy     = safe_mean([c['energy']       for c in evaluated_candidates])
+        mean_coherence  = safe_mean([c['coherence']    for c in evaluated_candidates])
+        mean_ncc        = safe_mean([c['ncc_penalty']  for c in evaluated_candidates])
 
         for c in evaluated_candidates:
-            c['ef1_score'] = (c['lcm_score'] / mean_lcm +
-                              c['energy']    / mean_energy)
+            c['ef1_score'] = (c['lcm_score']   / mean_lcm       +
+                              c['energy']       / mean_energy    +
+                              c['coherence']    / mean_coherence +
+                              c['ncc_penalty']  / mean_ncc)
 
         evaluated_candidates.sort(key=lambda x: x['ef1_score'])
         winner = evaluated_candidates[0]
         print(f"\nEF1 selected LCM rank {winner['index']} | "
               f"lcm={winner['lcm_score']:.4f}  energy={winner['energy']:.4f}  "
+              f"coherence={winner['coherence']:.4f}  ncc_penalty={winner['ncc_penalty']:.4f}  "
               f"ef1_score={winner['ef1_score']:.4f}")
 
         h_crop, w_crop = winner['m_crop'].shape[:2]
@@ -630,8 +694,8 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
         base_candidates.sort(key=lambda x: x['composite'])
 
         for rank, cand in enumerate(base_candidates[:10]):
-            cv2.imwrite(f"debug_match_{rank}.png", cand['m_crop'])
-            cv2.imwrite(f"debug_seam_{rank}.png", cand['seam_mask'] * 255)
+            # cv2.imwrite(f"debug_match_{rank}.png", cand['m_crop'])
+            # cv2.imwrite(f"debug_seam_{rank}.png", cand['seam_mask'] * 255)
 
             h_crop, w_crop = cand['m_crop'].shape[:2]
             center_x = int(cand['x1'] + (w_crop / 2))
@@ -655,23 +719,23 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
     # The input image is NOT super-resolved – we just go back to its original
     # dimensions using high-quality PIL LANCZOS (plain resize, not SR).
     # ------------------------------------------------------------------
-    if args.use_ef3 and output_files:
-        orig_pil = Image.open(original_image_path)
-        orig_w, orig_h = orig_pil.size
-        print(f"\n[EF3] Resizing output(s) to original input size: {orig_w}x{orig_h}")
+    # if args.use_ef3 and output_files:
+    #     orig_pil = Image.open(original_image_path)
+    #     orig_w, orig_h = orig_pil.size
+    #     print(f"\n[EF3] Resizing output(s) to original input size: {orig_w}x{orig_h}")
 
-        for fname in output_files:
-            completed_bgr = cv2.imread(fname)
-            if completed_bgr is None:
-                continue
-            # Pure PIL resize – input is NOT super-resolved
-            completed_rgb = completed_bgr[:, :, ::-1]
-            pil_out = Image.fromarray(completed_rgb.astype(np.uint8))
-            pil_out = pil_out.resize((orig_w, orig_h), Image.Resampling.LANCZOS)
-            out_bgr = np.array(pil_out)[:, :, ::-1]
-            ef3_name = fname.replace('.png', '_EF3_original_size.png')
-            cv2.imwrite(ef3_name, out_bgr)
-            print(f"  [EF3] Saved at original size: {ef3_name}")
+    #     for fname in output_files:
+    #         completed_bgr = cv2.imread(fname)
+    #         if completed_bgr is None:
+    #             continue
+    #         # Pure PIL resize – input is NOT super-resolved
+    #         completed_rgb = completed_bgr[:, :, ::-1]
+    #         pil_out = Image.fromarray(completed_rgb.astype(np.uint8))
+    #         pil_out = pil_out.resize((orig_w, orig_h), Image.Resampling.LANCZOS)
+    #         out_bgr = np.array(pil_out)[:, :, ::-1]
+    #         ef3_name = fname.replace('.png', '_EF3_original_size.png')
+    #         cv2.imwrite(ef3_name, out_bgr)
+    #         print(f"  [EF3] Saved at original size: {ef3_name}")
 
 
 # ---------------------------------------------------------------------------
