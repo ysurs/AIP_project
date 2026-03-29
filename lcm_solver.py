@@ -125,6 +125,7 @@ def _cbuf_u(n):
 
 def bgr_to_gray(img_bgr):
     """uint8 BGR [H,W,3] -> float32 [H,W]"""
+    img_bgr = np.ascontiguousarray(img_bgr, dtype=np.uint8)
     h, w = img_bgr.shape[0], img_bgr.shape[1]
     bgr  = (ctypes.c_uint8  * (h * w * 3)).from_buffer_copy(img_bgr)
     out  = _cbuf_f(h * w)
@@ -134,6 +135,7 @@ def bgr_to_gray(img_bgr):
 
 def bgr_to_lab(img_bgr):
     """uint8 BGR [H,W,3] -> float32 Lab [H,W,3]"""
+    img_bgr = np.ascontiguousarray(img_bgr, dtype=np.uint8)
     h, w = img_bgr.shape[0], img_bgr.shape[1]
     bgr  = (ctypes.c_uint8  * (h * w * 3)).from_buffer_copy(img_bgr)
     out  = _cbuf_f(h * w * 3)
