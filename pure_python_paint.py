@@ -472,39 +472,24 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
     mask_gray = cv2.imread(mask_1024_path, cv2.IMREAD_GRAYSCALE)
 
     if args.use_ef3:
-        # EF3 per spec:
-        # 1. Take top-m by GIST score (already ranked by find_k_best_matches)
-        # 2. SR each tiny image to full query resolution
-        # 3. Refine alignment: run LCM on SR'd full-res images vs full-res input
-        # Input image is NEVER downsampled.
+        # EF3: SR all k matched tiny images up to query resolution,
+        # then let the base pipeline run as usual.
         from super_resolve import super_resolve_image
         target_h, target_w = q_bgr.shape[:2]
-        top_m = min(7, len(match_img_bgr_list))
-        first_tiny = match_img_bgr_list[0]
-
-        print(f"\n[EF3 Step 5] Top matched tiny image size: {first_tiny.shape[1]}x{first_tiny.shape[0]}")
-        print(f"[EF3 Step 6] Super-resolving top {top_m} GIST-ranked tiny images (preserving aspect ratio)...")
+        print(f"\n[EF3] Super-resolving all {len(match_img_bgr_list)} matched tiny images to {target_w}x{target_h}...")
         sr_img_list = []
-        for i in range(top_m):
-            tiny = match_img_bgr_list[i]
-            # Scale by width ratio so each image keeps its own aspect ratio.
-            # tiny DB was created with longest-edge=256, so heights vary per image.
-            # Forcing all to target_h would distort content and corrupt blending.
+        for i, tiny in enumerate(match_img_bgr_list):
+            # Scale by width ratio to preserve each image's aspect ratio.
             scale = target_w / tiny.shape[1]
             sr_h = int(tiny.shape[0] * scale)
             sr_w = target_w
             print(f"   [EF3-SR] rank {i+1}: {tiny.shape[1]}x{tiny.shape[0]} → {sr_w}x{sr_h}")
             sr_img_list.append(super_resolve_image(tiny, sr_h, sr_w))
-
-        print(f"\n[EF3] Refining alignment via LCM on SR'd full-res images (input unchanged)...")
-        local_results = match_context_optimized(q_bgr, mask_gray, sr_img_list)
-
         match_img_bgr_list = sr_img_list
-        scene_scores = scene_scores[:top_m]
-    else:
-        # Step 5: LCM on full-res DB images
-        print("\n[Step 5] Running LCM on matched images...")
-        local_results = match_context_optimized(q_bgr, mask_gray, match_img_bgr_list)
+
+    # Step 5: LCM on (SR'd if EF3, or full-res) DB images
+    print("\n[Step 5] Running LCM on matched images...")
+    local_results = match_context_optimized(q_bgr, mask_gray, match_img_bgr_list)
 
     print("\nLocal Context Matching Results:")
     print(local_results)
