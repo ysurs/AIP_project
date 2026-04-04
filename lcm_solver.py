@@ -11,7 +11,7 @@ import ctypes
 import os
 import subprocess
 
-import numpy as np  # used only in return statements
+import numpy as np  # used for array types and dtypes
 
 _LIB = None
 
@@ -125,22 +125,22 @@ def _cbuf_u(n):
 
 def bgr_to_gray(img_bgr):
     """uint8 BGR [H,W,3] -> float32 [H,W]"""
-    img_bgr = np.ascontiguousarray(img_bgr, dtype=np.uint8)
+    img_bgr = img_bgr.astype(np.uint8, order='C', copy=False)
     h, w = img_bgr.shape[0], img_bgr.shape[1]
     bgr  = (ctypes.c_uint8  * (h * w * 3)).from_buffer_copy(img_bgr)
     out  = _cbuf_f(h * w)
     _load().lcm_bgr_to_gray(bgr, h, w, out)
-    return np.array(out, dtype=np.float32).reshape(h, w)
+    return np.ndarray((h * w,), dtype=np.float32, buffer=out).copy().reshape(h, w)
 
 
 def bgr_to_lab(img_bgr):
     """uint8 BGR [H,W,3] -> float32 Lab [H,W,3]"""
-    img_bgr = np.ascontiguousarray(img_bgr, dtype=np.uint8)
+    img_bgr = img_bgr.astype(np.uint8, order='C', copy=False)
     h, w = img_bgr.shape[0], img_bgr.shape[1]
     bgr  = (ctypes.c_uint8  * (h * w * 3)).from_buffer_copy(img_bgr)
     out  = _cbuf_f(h * w * 3)
     _load().lcm_bgr_to_lab(bgr, h, w, out)
-    return np.array(out, dtype=np.float32).reshape(h, w, 3)
+    return np.ndarray((h * w * 3,), dtype=np.float32, buffer=out).copy().reshape(h, w, 3)
 
 
 def dilate(mask_u8, radius):
@@ -149,7 +149,7 @@ def dilate(mask_u8, radius):
     mask = (ctypes.c_uint8  * (h * w)).from_buffer_copy(mask_u8)
     out  = _cbuf_u(h * w)
     _load().lcm_dilate(mask, h, w, radius, out)
-    return np.array(out, dtype=np.uint8).reshape(h, w)
+    return np.ndarray((h * w,), dtype=np.uint8, buffer=out).copy().reshape(h, w)
 
 
 def resize(img, new_h, new_w):
@@ -163,8 +163,8 @@ def resize(img, new_h, new_w):
     src = (ctypes.c_float * (h * w * nc)).from_buffer_copy(img)
     out = _cbuf_f(new_h * new_w * nc)
     _load().lcm_resize(src, h, w, out, new_h, new_w, nc)
-    return np.array(out, dtype=np.float32).reshape(new_h, new_w) if is_2d \
-        else np.array(out, dtype=np.float32).reshape(new_h, new_w, nc)
+    arr = np.ndarray((new_h * new_w * nc,), dtype=np.float32, buffer=out).copy()
+    return arr.reshape(new_h, new_w) if is_2d else arr.reshape(new_h, new_w, nc)
 
 
 def texture_map(img_gray):
@@ -173,7 +173,7 @@ def texture_map(img_gray):
     gray = (ctypes.c_float * (h * w)).from_buffer_copy(img_gray)
     out  = _cbuf_f(h * w)
     _load().lcm_texture_map(gray, h, w, out)
-    return np.array(out, dtype=np.float32).reshape(h, w)
+    return np.ndarray((h * w,), dtype=np.float32, buffer=out).copy().reshape(h, w)
 
 
 def match_ssd(search, template, mask_1ch):
@@ -188,9 +188,9 @@ def match_ssd(search, template, mask_1ch):
     th, tw = template.shape[0], template.shape[1]
     nc     = search.shape[2] if len(search.shape) == 3 else 1
     # 2D [H,W] and 3D [H,W,1] share the same flat byte layout
-    s      = (ctypes.c_float * (sh * sw * nc)).from_buffer_copy(np.ascontiguousarray(search))
-    t      = (ctypes.c_float * (th * tw * nc)).from_buffer_copy(np.ascontiguousarray(template))
-    m      = (ctypes.c_float * (th * tw)).from_buffer_copy(np.ascontiguousarray(mask_1ch))
+    s      = (ctypes.c_float * (sh * sw * nc)).from_buffer_copy(search   if search.flags['C_CONTIGUOUS']   else search.copy(order='C'))
+    t      = (ctypes.c_float * (th * tw * nc)).from_buffer_copy(template if template.flags['C_CONTIGUOUS'] else template.copy(order='C'))
+    m      = (ctypes.c_float * (th * tw)).from_buffer_copy(mask_1ch if mask_1ch.flags['C_CONTIGUOUS']      else mask_1ch.copy(order='C'))
     out_h  = sh - th + 1
     out_w  = sw - tw + 1
     out    = _cbuf_f(out_h * out_w)
@@ -200,4 +200,4 @@ def match_ssd(search, template, mask_1ch):
         m, nc,
         out,
     )
-    return np.array(out, dtype=np.float32).reshape(out_h, out_w)
+    return np.ndarray((out_h * out_w,), dtype=np.float32, buffer=out).copy().reshape(out_h, out_w)

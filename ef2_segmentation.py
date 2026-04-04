@@ -103,8 +103,8 @@ def predict_mask_at_point(predictor, x, y, image_h, image_w):
         multimask_output=True,   # returns 3 candidate masks
     )
 
-    # Pure numpy: pick the mask with the highest confidence score
-    best_idx = int(np.argmax(scores))
+    # Pure Python: pick the mask with the highest confidence score
+    best_idx = max(range(len(scores)), key=lambda i: scores[i])
     return masks[best_idx]   # bool (H, W)
 
 
@@ -120,10 +120,10 @@ def merge_masks_pure(mask_list, image_h, image_w):
     Pure numpy – no third-party dependency.
     """
     if not mask_list:
-        return np.zeros((image_h, image_w), dtype=np.uint8)
+        return np.array([[0] * image_w for _ in range(image_h)], dtype=np.uint8)
 
-    combined = np.zeros((image_h, image_w), dtype=np.bool_)
-    for m in mask_list:
+    combined = mask_list[0].copy()
+    for m in mask_list[1:]:
         combined = combined | m   # element-wise OR
 
     return (combined * 255).astype(np.uint8)

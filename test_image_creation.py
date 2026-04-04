@@ -1,9 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import convolve2d
 from PIL import Image
 import os
-from scipy.ndimage import gaussian_filter
 import math
 
 
@@ -523,20 +521,30 @@ def local_contrast_normalization(img_list, sigma=10):
 
 def compute_color_feature(image_path, blocks=4):
     """Computes color features manually mapping RGB to LAB using basic math."""
-    # PIL strictly used for I/O
-    img = Image.open(image_path).convert('RGB')
-    width, height = img.size
-    pixels = list(img.getdata())
-    
-    # Restructure into 3D list [row][col][rgb] scaled 0-1
-    img_3d = [[[0.0]*3 for _ in range(width)] for _ in range(height)]
-    idx = 0
-    for r in range(height):
-        for c in range(width):
-            img_3d[r][c][0] = pixels[idx][0] / 255.0
-            img_3d[r][c][1] = pixels[idx][1] / 255.0
-            img_3d[r][c][2] = pixels[idx][2] / 255.0
-            idx += 1
+    if isinstance(image_path, str):
+        # PIL strictly used for I/O
+        img = Image.open(image_path).convert('RGB')
+        width, height = img.size
+        pixels = list(img.getdata())
+
+        # Restructure into 3D list [row][col][rgb] scaled 0-1
+        img_3d = [[[0.0]*3 for _ in range(width)] for _ in range(height)]
+        idx = 0
+        for r in range(height):
+            for c in range(width):
+                img_3d[r][c][0] = pixels[idx][0] / 255.0
+                img_3d[r][c][1] = pixels[idx][1] / 255.0
+                img_3d[r][c][2] = pixels[idx][2] / 255.0
+                idx += 1
+    else:
+        # Input is a list or numpy array [rows][cols][3]
+        try:
+            raw = image_path.tolist()
+        except AttributeError:
+            raw = image_path
+        height = len(raw)
+        width = len(raw[0])
+        img_3d = [[[float(raw[r][c][k]) for k in range(3)] for c in range(width)] for r in range(height)]
 
     # Manual Block Averaging (Resizing to 4x4)
     r_step = height // blocks
@@ -594,15 +602,24 @@ def compute_color_feature(image_path, blocks=4):
 
 def compute_gist(image_path, mask_path=None, scales=5, orientations=6, blocks=4):
     """Computes Gist descriptor purely with Python lists and basic math."""
-    # 1. Load Image (PIL for I/O, resizing to 256x256 to save math time)
-    img = Image.open(image_path).convert('L').resize((256, 256), Image.Resampling.LANCZOS)
-    pixels = list(img.getdata())
-    width, height = 256, 256
-    
-    img_list = [[0.0] * width for _ in range(height)]
-    for r in range(height):
-        for c in range(width):
-            img_list[r][c] = pixels[r * width + c] / 255.0
+    # 1. Load Image
+    if isinstance(image_path, str):
+        img = Image.open(image_path).convert('L').resize((256, 256), Image.Resampling.LANCZOS)
+        pixels = list(img.getdata())
+        width, height = 256, 256
+        img_list = [[0.0] * width for _ in range(height)]
+        for r in range(height):
+            for c in range(width):
+                img_list[r][c] = pixels[r * width + c] / 255.0
+    else:
+        # Input is a 2D list or numpy array
+        try:
+            raw = image_path.tolist()
+        except AttributeError:
+            raw = image_path
+        height = len(raw)
+        width = len(raw[0])
+        img_list = [[float(raw[r][c]) for c in range(width)] for r in range(height)]
 
     gist_weights = [[1.0] * blocks for _ in range(blocks)]
     valid_mask = [[True] * width for _ in range(height)]
@@ -713,7 +730,9 @@ def visualize_gist(gist_data, scales, orientations):
                           width_ratios=[1]*orientations + [0.3],
                           height_ratios=[1]*scales + [0.5])
     
-    v_max = np.max(gist_data) if np.max(gist_data) > 0 else 1
+    v_max = max(gist_data.flat)
+    if v_max <= 0:
+        v_max = 1
     
     for s in range(scales):
         for o in range(orientations):
@@ -727,7 +746,7 @@ def visualize_gist(gist_data, scales, orientations):
     # Add Orientation Icons
     for o in range(orientations):
         ax_icon = fig.add_subplot(gs[scales, o])
-        theta = o * np.pi / orientations
+        theta = o * math.pi / orientations
         icon = get_gabor_kernel(3, theta, 6, 0.5)
         ax_icon.imshow(icon, cmap='gray')
         ax_icon.axis('off')
@@ -744,66 +763,62 @@ def visualize_gist(gist_data, scales, orientations):
     
 def generate_vertical_split(size=128):
     """
-    Generates a synthetic image that is half black (0) and half white (1), 
+    Generates a synthetic image that is half black (0) and half white (1),
     split vertically in the center.
     """
-    # 1. Start with an array of zeros (all black)
-    image_array = np.ones((size, size), dtype=np.float32)
-    
-    # 2. Set the right half to 1 (all white)
-    # This selects rows :, and columns from size//2 (64) to the end.
-    image_array[:, size // 2:] = 0.0
-    
-    return image_array
+    half = size // 2
+    image_list = [[1.0 if c < half else 0.0 for c in range(size)] for r in range(size)]
+    return np.array(image_list, dtype='float32')
 
 def generate_high_freq_checkerboard(size=128, block_size=2):
     """
-    Generates a dense checkerboard pattern. 
+    Generates a dense checkerboard pattern.
     Smaller block_size = higher frequency = more activation in the bottom rows.
     """
-    # Create a small 2x2 base pattern
-    base = np.array([[0, 1], [1, 0]])
-    # Repeat it to fill the image size
-    image_array = np.tile(base, (size // (2 * block_size), size // (2 * block_size)))
-    # Repeat elements to create blocks of 'block_size'
-    image_array = np.repeat(np.repeat(image_array, block_size, axis=0), block_size, axis=1)
-    
-    return image_array.astype(np.float32)
+    image_list = [
+        [float((r // block_size + c // block_size) % 2) for c in range(size)]
+        for r in range(size)
+    ]
+    return np.array(image_list, dtype='float32')
 
 def test_color_feature():
     print("Running test case: Texture vs Color.")
     size = 128
-    # 1. Create two identical structural images (vertical split)
-    img_blue = np.zeros((size, size, 3), dtype=np.float32)
-    img_red = np.zeros((size, size, 3), dtype=np.float32)
-    
-    # Blue half / Red half
-    img_blue[:, :size//2, 2] = 1.0  
-    img_red[:, :size//2, 0] = 1.0   
-    
-    # White halves
-    img_blue[:, size//2:] = 1.0
-    img_red[:, size//2:] = 1.0
-    
-    # Convert to Grayscale for GIST
-    img_blue_gray = np.mean(img_blue, axis=-1)
-    img_red_gray = np.mean(img_red, axis=-1)
+    half = size // 2
+
+    # 1. Create two identical structural images (vertical split) as 3D lists [row][col][rgb]
+    img_blue = [[[0.0, 0.0, 0.0] for _ in range(size)] for _ in range(size)]
+    img_red  = [[[0.0, 0.0, 0.0] for _ in range(size)] for _ in range(size)]
+
+    for r in range(size):
+        for c in range(half):
+            img_blue[r][c][2] = 1.0   # Blue channel
+            img_red[r][c][0] = 1.0    # Red channel
+        for c in range(half, size):
+            img_blue[r][c] = [1.0, 1.0, 1.0]
+            img_red[r][c]  = [1.0, 1.0, 1.0]
+
+    # Convert to Grayscale for GIST (average of 3 channels)
+    img_blue_gray = [[(img_blue[r][c][0] + img_blue[r][c][1] + img_blue[r][c][2]) / 3.0
+                      for c in range(size)] for r in range(size)]
+    img_red_gray  = [[(img_red[r][c][0]  + img_red[r][c][1]  + img_red[r][c][2])  / 3.0
+                      for c in range(size)] for r in range(size)]
 
     # 2. Compute GIST
     gist_blue, _ = compute_gist(img_blue_gray)
-    gist_red, _ = compute_gist(img_red_gray)
+    gist_red, _  = compute_gist(img_red_gray)
 
     # 3. Compute Color Features
     color_blue = compute_color_feature(img_blue)
-    color_red = compute_color_feature(img_red)
+    color_red  = compute_color_feature(img_red)
 
     # Assertions to prove the concept
-    gist_diff = np.sum(np.abs(gist_blue - gist_red))
-    color_diff = np.sum(np.abs(color_blue - color_red))
+    gist_diff  = sum(abs(a - b) for a, b in zip(gist_blue.flat,  gist_red.flat))
+    color_diff = sum(abs(a - b) for a, b in zip(color_blue.flat, color_red.flat))
 
     print(f"GIST Descriptor Difference (should be ~0.0): {gist_diff:.4f}")
     print(f"L*a*b* Color Feature Difference (should be large): {color_diff:.4f}")
-    
+
     if gist_diff < 0.1 and color_diff > 10.0:
         print("SUCCESS! The system successfully distinguishes identical textures by color.\n")
     else:
@@ -821,13 +836,14 @@ if __name__ == '__main__':
         
         # TEST: Generate a pure white image
         print("No image provided. Processing white image...")
-        test_img = np.ones((128, 128))
+        test_img = [[1.0] * 128 for _ in range(128)]
         #test_img = generate_vertical_split(128)
         #test_img = generate_high_freq_checkerboard(128, 2)
         #test_img = np.zeros((128, 128))
         #test_img[64:, :] = 1.0
         # Create the PIL image object first, then call .save() on it
-        Image.fromarray((test_img * 255).astype(np.uint8)).save("horiz_split.png")
+        img_bytes = bytes(int(test_img[r][c] * 255) for r in range(128) for c in range(128))
+        Image.frombytes('L', (128, 128), img_bytes).save("horiz_split.png")
         data, weights = compute_gist(test_img)
     
     #print(data.shape)

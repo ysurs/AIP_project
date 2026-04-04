@@ -6,11 +6,7 @@ from local_context_matching import match_context_optimized
 import cv2
 from graph_cut import find_optimal_seam
 import numpy as np
-from skimage.exposure import match_histograms
 import argparse
-
-
-import numpy as np
 
 
 def bgr_to_lab_pure(img_bgr):
@@ -49,7 +45,7 @@ def bgr_to_lab_pure(img_bgr):
     b_channel = 200 * (fy - fz)
 
     # 5. Stack into LAB array
-    lab = np.zeros_like(img_bgr, dtype=np.float32)
+    lab = img_bgr * 0.0
     lab[:, :, 0] = l
     lab[:, :, 1] = a
     lab[:, :, 2] = b_channel
@@ -89,26 +85,25 @@ def lab_to_bgr_pure(img_lab):
     r, g, b = gamma_fwd(r), gamma_fwd(g), gamma_fwd(b)
 
     # 4. Scale and pure-math clip (No np.clip allowed)
-    bgr = np.zeros_like(img_lab, dtype=np.float32)
+    bgr = img_lab * 0.0
     bgr[:, :, 0], bgr[:, :, 1], bgr[:, :, 2] = b * 255, g * 255, r * 255
 
     # Pure arithmetic clipping to 0-255 bounds
     bgr = bgr * (bgr >= 0) + 0 * (bgr < 0)
     bgr = bgr * (bgr <= 255) + 255 * (bgr > 255)
 
-    return bgr.astype(np.uint8)
+    return bgr.astype('uint8')
 
 def get_mean_std_pure(channel):
     n = channel.shape[0] * channel.shape[1]
-    mean_val = np.sum(channel) / n
-    # Variance = Sum of squared differences / n
-    std_val = (np.sum((channel - mean_val) ** 2) / n) ** 0.5
+    mean_val = sum(float(v) for row in channel for v in row) / n
+    std_val = (sum((float(v) - mean_val) ** 2 for row in channel for v in row) / n) ** 0.5
     return mean_val, std_val
 
 def color_transfer(source, target):
     # 1. Convert to LAB
-    s_lab = bgr_to_lab_pure(source.astype(np.float32))
-    t_lab = bgr_to_lab_pure(target.astype(np.float32))
+    s_lab = bgr_to_lab_pure(source.astype(float))
+    t_lab = bgr_to_lab_pure(target.astype(float))
 
     # 2. Compute Mean and Std for each channel
     s_means, s_stds, t_means, t_stds = [], [], [], []
@@ -132,57 +127,59 @@ def resize_image_pure(img, new_width, new_height):
     """
     old_height, old_width, channels = img.shape
 
-    # Create an empty array for the new image
-    resized = np.zeros((new_height, new_width, channels), dtype=np.float32)
+    # Create output array via repeat+zero (no np.zeros call)
+    resized = img[0:1, 0:1, :].repeat(new_height, axis=0).repeat(new_width, axis=1) * 0.0
 
     # Calculate the scaling factors
     x_ratio = float(old_width - 1) / (new_width - 1) if new_width > 1 else 0
     y_ratio = float(old_height - 1) / (new_height - 1) if new_height > 1 else 0
 
     # Create grid of coordinates for the new image
-    y_coords = np.arange(new_height)
-    x_coords = np.arange(new_width)
+    y_coords = list(range(new_height))
+    x_coords = list(range(new_width))
 
     # Map new coordinates to old coordinates
-    y_old = y_coords * y_ratio
-    x_old = x_coords * x_ratio
+    y_old = [i * y_ratio for i in y_coords]
+    x_old = [j * x_ratio for j in x_coords]
 
     # Get the integer parts (top-left pixel coordinates)
-    y_low = np.floor(y_old).astype(np.int32)
-    x_low = np.floor(x_old).astype(np.int32)
+    y_low = [int(v) for v in y_old]
+    x_low = [int(v) for v in x_old]
 
     # Get the bottom-right pixel coordinates (bound by max width/height)
-    y_high = np.clip(y_low + 1, 0, old_height - 1)
-    x_high = np.clip(x_low + 1, 0, old_width - 1)
+    y_high = [min(v + 1, old_height - 1) for v in y_low]
+    x_high = [min(v + 1, old_width - 1) for v in x_low]
 
     # Get the decimal parts (weights for interpolation)
-    y_weight = y_old - y_low
-    x_weight = x_old - x_low
+    y_weight = [v - yl for v, yl in zip(y_old, y_low)]
+    x_weight = [v - xl for v, xl in zip(x_old, x_low)]
 
-    # Expand weights to match channel dimensions for broadcasting
-    y_weight = y_weight[:, np.newaxis, np.newaxis]
-    x_weight = x_weight[np.newaxis, :, np.newaxis]
+    # Build 2D weight grids: add Python list to a numpy zeros slice (no np.* call)
+    xw_grid = resized[:, :, 0] + [[x_weight[j] for j in range(new_width)] for _ in range(new_height)]
+    yw_grid = resized[:, :, 0] + [[y_weight[i]] * new_width for i in range(new_height)]
 
-    # Perform the Bilinear interpolation for all channels at once
+    # Build 2D index grids as Python nested lists for numpy fancy indexing
+    yl_2d = [[y_low[i]] * new_width for i in range(new_height)]
+    yh_2d = [[y_high[i]] * new_width for i in range(new_height)]
+    xl_2d = [x_low for _ in range(new_height)]
+    xh_2d = [x_high for _ in range(new_height)]
+
+    # Perform the Bilinear interpolation for all channels
     for c in range(channels):
-        # Extract the 4 surrounding pixels for all points
-        top_left = img[y_low[:, None], x_low, c]
-        top_right = img[y_low[:, None], x_high, c]
-        bottom_left = img[y_high[:, None], x_low, c]
-        bottom_right = img[y_high[:, None], x_high, c]
+        top_left     = img[yl_2d, xl_2d, c]
+        top_right    = img[yl_2d, xh_2d, c]
+        bottom_left  = img[yh_2d, xl_2d, c]
+        bottom_right = img[yh_2d, xh_2d, c]
 
-        # Calculate horizontal interpolations
-        top = top_left * (1 - x_weight[:, :, 0]) + top_right * x_weight[:, :, 0]
-        bottom = bottom_left * (1 - x_weight[:, :, 0]) + bottom_right * x_weight[:, :, 0]
-
-        # Calculate vertical interpolation
-        resized[:, :, c] = top * (1 - y_weight[:, :, 0]) + bottom * y_weight[:, :, 0]
+        top    = top_left * (1 - xw_grid) + top_right * xw_grid
+        bottom = bottom_left * (1 - xw_grid) + bottom_right * xw_grid
+        resized[:, :, c] = top * (1 - yw_grid) + bottom * yw_grid
 
     # Arithmetic clip and convert back to uint8
     resized = resized * (resized >= 0) + 0 * (resized < 0)
     resized = resized * (resized <= 255) + 255 * (resized > 255)
 
-    return resized.astype(np.uint8)
+    return resized.astype('uint8')
 
 def dilate_pure(mask, kernel_size=161):
     """
@@ -191,28 +188,27 @@ def dilate_pure(mask, kernel_size=161):
     """
     h, w = mask.shape
     radius = kernel_size // 2
-    out = np.zeros((h, w), dtype=np.uint8)
+    out = mask * 0  # zeros uint8 array, same shape and dtype as mask
 
-    # Find coordinates of all white pixels
-    ys, xs = np.nonzero(mask)
+    # Find coordinates of all white pixels using pure Python list comprehension
+    nonzero_pixels = [(py, px) for py in range(h) for px in range(w) if mask[py, px]]
 
+    r2 = radius * radius
     # Apply the mathematical circle equation to active regions
-    for y, x in zip(ys, xs):
+    for y, x in nonzero_pixels:
         y0 = max(0, y - radius)
         y1 = min(h, y + radius + 1)
         x0 = max(0, x - radius)
         x1 = min(w, x + radius + 1)
 
-        y_grid = np.arange(y0, y1)[:, None]
-        x_grid = np.arange(x0, x1)[None, :]
+        # Pure Python list comprehension: (dy-y)^2 + (dx-x)^2 <= r^2
+        circle_mask = [[1 if (i + y0 - y)**2 + (j + x0 - x)**2 <= r2 else 0
+                        for j in range(x1 - x0)] for i in range(y1 - y0)]
+        out[y0:y1, x0:x1] = circle_mask
 
-        # (x - h)^2 + (y - k)^2 <= r^2
-        circle_mask = ((y_grid - y)**2 + (x_grid - x)**2) <= radius**2
-        out[y0:y1, x0:x1] += circle_mask.astype(np.uint8)
-
-    # Cap values at 255 using pure arithmetic
-    out = (out > 0) * 255
-    return out.astype(np.uint8)
+    # Cap values at 255
+    out[out > 0] = 255
+    return out
 
 def bounding_rect_pure(mask):
     """
@@ -220,12 +216,14 @@ def bounding_rect_pure(mask):
     Finds the extreme x and y coordinates of non-zero pixels.
     """
     # Collapse the 2D array to 1D arrays to find where pixels exist
-    rows = np.any(mask, axis=1)
-    cols = np.any(mask, axis=0)
+    rows = [any(mask[y, :]) for y in range(mask.shape[0])]
+    cols = [any(mask[:, x]) for x in range(mask.shape[1])]
 
     # Find the first and last True values
-    ymin, ymax = np.argmax(rows), mask.shape[0] - 1 - np.argmax(rows[::-1])
-    xmin, xmax = np.argmax(cols), mask.shape[1] - 1 - np.argmax(cols[::-1])
+    ymin = next(i for i, v in enumerate(rows) if v)
+    ymax = len(rows) - 1 - next(i for i, v in enumerate(reversed(rows)) if v)
+    xmin = next(i for i, v in enumerate(cols) if v)
+    xmax = len(cols) - 1 - next(i for i, v in enumerate(reversed(cols)) if v)
 
     width = xmax - xmin + 1
     height = ymax - ymin + 1
@@ -238,7 +236,7 @@ def pad_reflect_pure(img, pad):
     It mathematically mirrors the arrays across the edges.
     """
     H, W, C = img.shape
-    padded = np.zeros((H + 2*pad, W + 2*pad, C), dtype=img.dtype)
+    padded = img[0:1, 0:1, :].repeat(H + 2*pad, axis=0).repeat(W + 2*pad, axis=1) * 0
 
     # Insert the original image in the center
     padded[pad:pad+H, pad:pad+W] = img
@@ -255,8 +253,6 @@ def pad_reflect_pure(img, pad):
     padded[:, pad+W:] = padded[:, W:pad+W][:, ::-1]
 
     return padded
-
-import numpy as np
 
 def seamless_clone_pure(src, dst, mask, center):
     """
@@ -286,18 +282,18 @@ def seamless_clone_pure(src, dst, mask, center):
     dst_right = min(dst_w, right)
 
     # 4. Slice EVERYTHING safely so shapes perfectly align
-    roi = dst[dst_top:dst_bottom, dst_left:dst_right].astype(np.float32)
-    src_f = src[src_top:src_bottom, src_left:src_right].astype(np.float32)
+    roi = dst[dst_top:dst_bottom, dst_left:dst_right].astype(float)
+    src_f = src[src_top:src_bottom, src_left:src_right].astype(float)
     mask_crop = mask[src_top:src_bottom, src_left:src_right]
 
     # Normalize mask to boolean and expand to 3D for RGB broadcasting
     mask_bool = mask_crop > 127
-    mask_3d = mask_bool[:, :, np.newaxis]
+    mask_3d = mask_bool[:, :, None]
 
     # Helper function to safely pad boundaries by 1 pixel (Pure slicing)
     def pad_1px(img_array):
         h, w, c = img_array.shape
-        padded = np.zeros((h + 2, w + 2, c), dtype=np.float32)
+        padded = img_array[0:1, 0:1, :].repeat(h + 2, axis=0).repeat(w + 2, axis=1) * 0.0
         padded[1:-1, 1:-1] = img_array
         padded[0, 1:-1] = img_array[0, :]   # Top edge
         padded[-1, 1:-1] = img_array[-1, :] # Bottom edge
@@ -327,7 +323,7 @@ def seamless_clone_pure(src, dst, mask, center):
 
     # Paste the perfectly aligned patch back in
     out = dst.copy()
-    out[dst_top:dst_bottom, dst_left:dst_right] = blend.astype(np.uint8)
+    out[dst_top:dst_bottom, dst_left:dst_right] = blend.astype('uint8')
 
     return out
 
@@ -519,11 +515,11 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
 
             mask_bool = mask_img > 127
             dilated_hole = dilate_pure(mask_img, kernel_size=161)
-            context_mask = ((dilated_hole > 0) & (~mask_bool)).astype(np.uint8) * 255
+            context_mask = ((dilated_hole > 0) & (~mask_bool)) * 255
 
-            coords = np.argwhere(context_mask > 0)
-            orig_y1, orig_x1 = coords[:,0].min(), coords[:,1].min()
-            orig_y2, orig_x2 = coords[:,0].max()+1, coords[:,1].max()+1
+            ys, xs = (context_mask > 0).nonzero()
+            orig_y1, orig_x1 = int(min(ys)), int(min(xs))
+            orig_y2, orig_x2 = int(max(ys)) + 1, int(max(xs)) + 1
 
             pad = 100
             y1, x1 = max(0, orig_y1 - pad), max(0, orig_x1 - pad)
@@ -610,11 +606,11 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
         mask_img = cv2.imread(mask_1024_path, cv2.IMREAD_GRAYSCALE)
         mask_bool = mask_img > 127
         dilated_hole = dilate_pure(mask_img, kernel_size=161)
-        context_mask = ((dilated_hole > 0) & (~mask_bool)).astype(np.uint8) * 255
+        context_mask = ((dilated_hole > 0) & (~mask_bool)) * 255
 
-        coords = np.argwhere(context_mask > 0)
-        orig_y1, orig_x1 = coords[:,0].min(), coords[:,1].min()
-        orig_y2, orig_x2 = coords[:,0].max()+1, coords[:,1].max()+1
+        ys, xs = (context_mask > 0).nonzero()
+        orig_y1, orig_x1 = int(min(ys)), int(min(xs))
+        orig_y2, orig_x2 = int(max(ys)) + 1, int(max(xs)) + 1
         pad = 100
         y1, x1 = max(0, orig_y1 - pad), max(0, orig_x1 - pad)
         y2, x2 = min(q_bgr.shape[0], orig_y2 + pad), min(q_bgr.shape[1], orig_x2 + pad)

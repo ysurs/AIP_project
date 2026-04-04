@@ -11,7 +11,6 @@ Build command used:
 import ctypes
 import os
 import subprocess
-
 import numpy as np
 
 _LIB = None
@@ -84,7 +83,7 @@ def solve_graph_cut(from_arr, to_arr, fwd_cap, rev_cap, num_nodes, source, sink)
                1 = node is on the source side (patch), 0 = sink side (query)
     """
     lib  = _load()
-    segs = np.zeros(num_nodes, dtype=np.int32)
+    segs = (ctypes.c_int * num_nodes)()
 
     flow = lib.solve_maxflow(
         num_nodes, source, sink,
@@ -93,6 +92,6 @@ def solve_graph_cut(from_arr, to_arr, fwd_cap, rev_cap, num_nodes, source, sink)
         _ptr(fwd_cap,  ctypes.c_double),
         _ptr(rev_cap,  ctypes.c_double),
         len(from_arr),
-        _ptr(segs,     ctypes.c_int),
+        ctypes.cast(segs, ctypes.POINTER(ctypes.c_int)),
     )
-    return float(flow), segs
+    return float(flow), np.ctypeslib.as_array(segs)
