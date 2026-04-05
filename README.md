@@ -1,1 +1,191 @@
-# AIP_project
+# AIP Project — Scene Completion Pipeline
+
+An implementation of the Hays & Efros *Scene Completion Using Millions of Photographs* pipeline, extended with three enhancement flags (EF1, EF2, EF3).
+
+---
+
+## Pipeline Overview
+
+```
+Input Image + Hole Mask
+        │
+        ▼
+[1] Scene Matching (GIST + Color features)
+        │  → finds k nearest scenes from a database
+        ▼
+[2] Local Context Matching
+        │  → aligns each candidate patch to the hole's context region
+        ▼
+[3] Graph Cut Seam Finding
+        │  → computes the optimal seam (Dinic's min-cut via C)
+        ▼
+[4] Poisson / Seamless Blending
+        │  → composites the patch into the query image
+        ▼
+Output Completed Image
+```
+
+### Enhancement Flags
+
+| Flag | Component | Description |
+|------|-----------|-------------|
+| `--use_ef1` | EF1 — Auto Ranking | Re-ranks candidates using seam energy (min-cut cost) from LCM; picks the best composite automatically |
+| `--use_ef2` | EF2 — SAM Segmentation | Replaces the hand-drawn mask UI with a click-to-segment interface backed by Meta's Segment Anything Model (SAM ViT-B) |
+| `--use_ef3` | EF3 — Super Resolution | Matches against a compact "tiny" database and upscales the final result 4× using Real-ESRGAN x4plus |
+
+---
+
+## Component Descriptions
+
+| File | Role |
+|------|------|
+| `pure_python_paint.py` | **Main entry point.** Tkinter GUI for brush-painting the hole mask; orchestrates the full pipeline. |
+| `test_image_creation.py` | GIST descriptor and color-histogram feature extraction for scene-level retrieval. |
+| `match_scenes.py` | Loads/caches GIST+color features for every database image; ranks them against the query using weighted SSD. |
+| `local_context_matching.py` | Crops a "context donut" around the hole and runs masked SSD template matching at multiple scales to place each candidate. Wraps `lcm_solver.c` via ctypes. |
+| `graph_cut.py` | Builds a 4-connected pixel graph and calls the C max-flow solver to find the optimal seam mask. |
+| `poisson_blending.py` | Composites the seam-masked patch into the query using OpenCV's `seamlessClone`. |
+| `ef2_segmentation.py` | SAM ViT-B wrapper for point-prompted segmentation; pure-Python mask merge/remove/overlay helpers. |
+| `super_resolve.py` | Real-ESRGAN x4plus upsampler (EF3). Loaded lazily; uses tiled inference to avoid OOM. |
+| `lcm_solver.py` | ctypes wrapper for `lcm_solver.c` — BGR→gray, BGR→LAB, morphological dilation, bilinear resize, texture map (Sobel+median), masked SSD. Auto-compiles on first import. |
+| `maxflow_solver.py` | ctypes wrapper for `graph_cut_solver.c` — Dinic's max-flow. Auto-compiles on first import. |
+| `skyline_data.py` | One-time utility to flatten a multi-city dataset into a flat `skyline_1024/` image database. |
+| `create_tiny_db.py` | Samples a small subset of the full database into `skyline_tiny/` for EF3 fast matching. |
+| `metric.py` | Evaluation utilities (PSNR / SSIM). |
+
+### C Shared Libraries
+
+| Source | Output | Purpose |
+|--------|--------|---------|
+| `lcm_solver.c` | `lcm_solver_lib.so` | Fast color-space conversions, dilation, resize, SSD for local context matching |
+| `graph_cut_solver.c` | `graph_cut_solver.so` | Dinic's max-flow algorithm for graph-cut seam finding |
+
+> Both `.so` files are auto-compiled by their Python wrappers on first import if `gcc` is available. You can also compile them manually (see below).
+
+---
+
+## Environment Setup
+
+### 1. Create and activate the conda environment
+
+```bash
+conda create -n aip_project python=3.11.4 -y
+conda activate aip_project
+```
+
+### 2. Install core dependencies
+
+```bash
+pip install "numpy==2.4.2" pillow opencv-python matplotlib tqdm
+```
+
+### 3. Install PyTorch (required for EF2 and EF3)
+
+For Apple Silicon (MPS):
+```bash
+pip install "torch==2.1.0" torchvision
+```
+
+For CUDA (Linux/Windows):
+```bash
+pip install "torch==2.1.0" torchvision --index-url https://download.pytorch.org/whl/cu118
+```
+
+### 4. Install EF2 — Segment Anything Model
+
+```bash
+pip install segment-anything
+```
+
+Download the SAM ViT-B checkpoint (~375 MB) and place it in the project root:
+```bash
+wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
+```
+
+Or set the environment variable to point to a different location:
+```bash
+export SAM_CHECKPOINT=/path/to/sam_vit_b_01ec64.pth
+```
+
+### 5. Install EF3 — Real-ESRGAN
+
+```bash
+pip install realesrgan basicsr facexlib gfpgan
+```
+
+> The Real-ESRGAN model weights are downloaded automatically on first use from GitHub releases.
+
+---
+
+## Compiling the C Libraries
+
+Both libraries compile automatically when first imported. To compile manually:
+
+```bash
+# Local Context Matching solver
+gcc -O3 -march=native -shared -fPIC -o lcm_solver_lib.so lcm_solver.c -lm
+
+# Graph Cut (Dinic's max-flow) solver
+gcc -O3 -shared -fPIC -o graph_cut_solver.so graph_cut_solver.c
+```
+
+> Requires `gcc`. On macOS, install via `xcode-select --install` or `brew install gcc`.
+
+---
+
+## Preparing the Image Database
+
+```bash
+# Flatten a multi-city dataset into skyline_1024/
+python skyline_data.py
+
+# Create a compact tiny subset for EF3
+python create_tiny_db.py
+```
+
+---
+
+## Running the Pipeline
+
+### Interactive mode (GUI mask drawing)
+
+```bash
+conda activate aip_project
+python pure_python_paint.py
+```
+
+Opens a file dialog to pick an image, then a Tkinter canvas for painting the hole mask.
+
+### Headless mode (supply image + mask directly)
+
+```bash
+python pure_python_paint.py --image image_1024.png --mask mask_1024.png
+```
+
+### With enhancement flags
+
+```bash
+# EF1: automatic candidate ranking by seam energy
+python pure_python_paint.py --image image_1024.png --mask mask_1024.png --use_ef1
+
+# EF2: SAM click-to-segment mask interface
+python pure_python_paint.py --image image_1024.png --use_ef2
+
+# EF3: tiny-DB matching + super-resolution output
+python pure_python_paint.py --image image_1024.png --mask mask_1024.png --use_ef3
+
+# All flags together
+python pure_python_paint.py --image image_1024.png --mask mask_1024.png --use_ef1 --use_ef2 --use_ef3
+```
+
+### Scene matching only (standalone)
+
+```bash
+python match_scenes.py --query image_1024.png --mask mask_1024.png --db skyline_1024 --k 10
+```
+
+---
+
+## Output
+
+Completed images are saved as `final_completed_image_*.png` in the project root.
