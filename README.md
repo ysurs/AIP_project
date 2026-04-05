@@ -44,7 +44,7 @@ Output Completed Image
 | `match_scenes.py` | Loads/caches GIST+color features for every database image; ranks them against the query using weighted SSD. |
 | `local_context_matching.py` | Crops a "context donut" around the hole and runs masked SSD template matching at multiple scales to place each candidate. Wraps `lcm_solver.c` via ctypes. |
 | `graph_cut.py` | Builds a 4-connected pixel graph and calls the C max-flow solver to find the optimal seam mask. |
-| `poisson_blending.py` | Composites the seam-masked patch into the query using OpenCV's `seamlessClone`. |
+| `pure_python_paint.py` (`seamless_clone_pure`) | Pure-numpy Poisson/seamless blending — iterative Jacobi solver applied inside the seam mask region. |
 | `ef2_segmentation.py` | SAM ViT-B wrapper for point-prompted segmentation; pure-Python mask merge/remove/overlay helpers. |
 | `super_resolve.py` | Real-ESRGAN x4plus upsampler (EF3). Loaded lazily; uses tiled inference to avoid OOM. |
 | `lcm_solver.py` | ctypes wrapper for `lcm_solver.c` — BGR→gray, BGR→LAB, morphological dilation, bilinear resize, texture map (Sobel+median), masked SSD. Auto-compiles on first import. |
@@ -76,19 +76,19 @@ conda activate aip_project
 ### 2. Install core dependencies
 
 ```bash
-pip install "numpy==2.4.2" pillow opencv-python matplotlib tqdm
+pip install "numpy==2.4.2" "Pillow==12.1.1" "opencv-python==4.13.0.92" "matplotlib==3.10.8" "tqdm==4.67.3"
 ```
 
 ### 3. Install PyTorch (required for EF2 and EF3)
 
 For Apple Silicon (MPS):
 ```bash
-pip install "torch==2.1.0" torchvision
+pip install "torch==2.10.0" "torchvision==0.25.0"
 ```
 
 For CUDA (Linux/Windows):
 ```bash
-pip install "torch==2.1.0" torchvision --index-url https://download.pytorch.org/whl/cu118
+pip install "torch==2.10.0" "torchvision==0.25.0" --index-url https://download.pytorch.org/whl/cu118
 ```
 
 ### 4. Install EF2 — Segment Anything Model
