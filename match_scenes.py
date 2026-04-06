@@ -4,129 +4,8 @@ import numpy as np
 import pickle
 from PIL import Image
 import cv2
+from feature_extraction import compute_gist, compute_color_feature,visualize_gist
 
-from test_image_creation import compute_gist, compute_color_feature,visualize_gist
-
-# def resize_longest_side(img, max_dim=1024):
-#     h, w = img.shape[:2]
-#     longest = max(h, w)
-
-#     if longest <= max_dim:
-#         return img
-
-#     scale = max_dim / longest
-#     new_w = int(w * scale)
-#     new_h = int(h * scale)
-
-#     return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-# def load_or_compute_db_features(db_dir, cache_file="db_features.pkl"):
-
-#     if os.path.exists(cache_file):
-#         print(f"Loading database features from {cache_file}...")
-#         with open(cache_file, "rb") as f:
-#             return pickle.load(f)
-
-#     print("Computing features for database images...")
-#     db_features = []
-
-#     for filename in os.listdir(db_dir):
-
-#         if not filename.lower().endswith(('.png','.jpg','.jpeg','.bmp')):
-#             continue
-
-#         filepath = os.path.join(db_dir, filename)
-
-#         try:
-#             # The database images have no mask, so weights are all 1
-#             gist_data, _ = compute_gist(filepath)
-#             color_data = compute_color_feature(filepath)
-            
-#             db_features.append({
-#                 'filename': filename,
-#                 'filepath': filepath,
-#                 'gist': gist_data,
-#                 'color': color_data
-#             })
-
-#             print(f"Processed {filename}")
-
-#         except Exception as e:
-#             print(f"Failed to process {filename}: {e}")
-            
-#     # Save to cache
-#     with open(cache_file, "wb") as f:
-#         pickle.dump(db_features, f)
-        
-#     return db_features
-
-
-# def find_k_best_matches(query_image, mask_image, db_dir, k=10):
-#     # 1. Compute query features
-#     print("Computing query features...")
-#     q_gist, q_weights = compute_gist(query_image, mask_image)
-#     print("Query GIST shape:", q_gist.shape)
-#     q_color = compute_color_feature(query_image)
-    
-#     visualize_gist(q_gist,5,6)
-#     #exit()
-    
-#     # 2. Load ALL database features into memory as giant arrays
-#     db_features = load_or_compute_db_features(db_dir)
-    
-#     # Convert list of dicts to Arrays for Vectorization
-#     # Shape: (N_images, scales, orientations, blocks, blocks)
-#     db_gist_arr = np.array([item['gist'] for item in db_features]) 
-#     # Shape: (N_images, blocks, blocks, 3)
-#     db_color_arr = np.array([item['color'] for item in db_features]) 
-    
-#     # 3. VECTORIZED Distance Calculation
-    
-#     # GIST Distance
-#     # (N, ...) - (query_shape) -> Broadcasting works automatically
-#     gist_diffs = db_gist_arr - q_gist 
-#     # Weight and Sum: Result is shape (N_images,)
-#     weighted_gist_ssd = np.sum(q_weights * (gist_diffs ** 2), axis=(1,2,3,4)) 
-
-#     # Color Distance
-#     color_diffs = db_color_arr - q_color
-#     # Weight needs expansion to match color channels (blocks, blocks, 1) or (blocks, blocks, 3)
-#     weights_expanded = np.expand_dims(q_weights, axis=-1)
-#     weighted_color_ssd = np.sum(weights_expanded * (color_diffs ** 2), axis=(1,2,3))
-
-#     # 4. Apply the "Twice as Much" Weighting Rule
-#     # We calculate the mean distance of the batch to normalize
-#     mean_gist_dist = np.mean(weighted_gist_ssd)
-#     mean_color_dist = np.mean(weighted_color_ssd)
-    
-#     # Prevent divide by zero
-#     if mean_color_dist == 0: mean_color_dist = 1.0
-    
-#     # Calculate lambda such that: mean(gist) = 2 * (lambda * mean(color))
-#     scaling_factor = mean_gist_dist / (2 * mean_color_dist)
-    
-#     total_scores = weighted_gist_ssd + (scaling_factor * weighted_color_ssd)
-
-#     # 5. Find Top K (using argpartition for speed)
-#     # Handle the case where k > number of elements
-#     k_actual = min(k, len(db_features) - 1)
-#     if k_actual <= 0:
-#         best_indices = np.argsort(total_scores)
-#     else:
-#         best_indices = np.argpartition(total_scores, k_actual)[:k]
-#         # Sort the top k
-#         best_indices = best_indices[np.argsort(total_scores[best_indices])]
-    
-#     results = []
-#     for idx in best_indices:
-#         results.append((total_scores[idx], db_features[idx]['filepath'], db_features[idx]['filename']))
-        
-#     return results
-
-import os
-import pickle
-# 'cv2' and 'numpy' special functions have been entirely removed from the processing logic.
-from test_image_creation import compute_gist, compute_color_feature, visualize_gist
 
 def resize_longest_side(img, max_dim=1024):
     """
@@ -264,7 +143,6 @@ def find_k_best_matches(query_image, mask_image, db_dir, k=10):
     print("Computing query features...")
     q_gist, q_weights = compute_gist(query_image, mask_image)
     
-    # We can't use .shape without importing numpy explicitly, we will calculate shape manually for print
     s_dim = len(q_gist)
     o_dim = len(q_gist[0]) if s_dim > 0 else 0
     y_dim = len(q_gist[0][0]) if o_dim > 0 else 0
@@ -320,7 +198,7 @@ def find_k_best_matches(query_image, mask_image, db_dir, k=10):
         score = gist_ssds[i] + (scaling_factor * color_ssds[i])
         total_scores.append(score)
 
-    # 5. Find Top K (Pure Python argsort equivalent)
+    # 5. Find Top K
     # Create a list of tuples: (score, original_index)
     indexed_scores = [(total_scores[i], i) for i in range(n_images)]
     

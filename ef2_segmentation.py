@@ -3,7 +3,7 @@ ef2_segmentation.py  –  EF2 smart-mask segmentation module
 
 Only the SAM inference call uses a third-party library (segment-anything).
 All surrounding logic – mask merging, mask removal, overlay rendering –
-is implemented in pure Python / pure numpy.
+is implemented in pure Python
 
 Install:
     pip install segment-anything
@@ -27,7 +27,7 @@ SAM_MODEL_TYPE = "vit_b"
 
 
 # ---------------------------------------------------------------------------
-# SAM wrapper  (only function that touches a third-party library)
+# SAM wrapper 
 # ---------------------------------------------------------------------------
 
 def load_sam_predictor(image_bgr):
@@ -109,7 +109,7 @@ def predict_mask_at_point(predictor, x, y, image_h, image_w):
 
 
 # ---------------------------------------------------------------------------
-# Pure-Python / pure-numpy helpers (NO third-party libraries below)
+# helper functions for mask merging, mask removal, and overlay rendering –
 # ---------------------------------------------------------------------------
 
 def merge_masks_pure(mask_list, image_h, image_w):
@@ -150,7 +150,7 @@ def remove_mask_at_point_pure(mask_list, x, y):
 def render_overlay_pure(bg_array_rgb, mask_uint8, alpha=0.55):
     """
     Blend a red overlay onto bg_array_rgb wherever mask_uint8 > 127.
-    All arithmetic is pure numpy – no third-party dependency.
+    All arithmetic is pure numpy – 
 
     Parameters
     ----------

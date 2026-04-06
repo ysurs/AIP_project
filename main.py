@@ -10,12 +10,25 @@ import argparse
 
 
 def bgr_to_lab_pure(img_bgr):
+    """
+    Convert a BGR float image to CIE LAB color space without OpenCV.
+
+    Applies inverse sRGB gamma correction, the standard RGB→XYZ matrix
+    (D65 illuminant), and the XYZ→LAB cube-root transfer function entirely
+    via array arithmetic.
+
+    Args:
+        img_bgr: H×W×3 array (float) in BGR channel order, values in [0, 255].
+
+    Returns:
+        H×W×3 float array in LAB channel order (L in [0,100], a/b unbounded).
+    """
     # 1. Normalize and split
     b = img_bgr[:, :, 0] / 255.0
     g = img_bgr[:, :, 1] / 255.0
     r = img_bgr[:, :, 2] / 255.0
 
-    # 2. Inverse sRGB Gamma (Arithmetic masking instead of np.where)
+    # 2. Inverse sRGB Gamma Correction
     def gamma_inv(c):
         mask_high = (c > 0.04045)
         mask_low = (c <= 0.04045)
@@ -52,6 +65,18 @@ def bgr_to_lab_pure(img_bgr):
     return lab
 
 def lab_to_bgr_pure(img_lab):
+    """
+    Convert a CIE LAB float image back to BGR uint8 without OpenCV.
+
+    Inverts the LAB→XYZ transfer function, applies the XYZ→RGB matrix, then
+    applies sRGB gamma correction. Output is arithmetic-clipped to [0, 255].
+
+    Args:
+        img_lab: H×W×3 float array in LAB channel order.
+
+    Returns:
+        H×W×3 uint8 array in BGR channel order, values in [0, 255].
+    """
     l = img_lab[:, :, 0]
     a = img_lab[:, :, 1]
     b_channel = img_lab[:, :, 2]
@@ -84,7 +109,7 @@ def lab_to_bgr_pure(img_lab):
 
     r, g, b = gamma_fwd(r), gamma_fwd(g), gamma_fwd(b)
 
-    # 4. Scale and pure-math clip (No np.clip allowed)
+    # 4. Scale and pure-math clip
     bgr = img_lab * 0.0
     bgr[:, :, 0], bgr[:, :, 1], bgr[:, :, 2] = b * 255, g * 255, r * 255
 
@@ -95,12 +120,37 @@ def lab_to_bgr_pure(img_lab):
     return bgr.astype('uint8')
 
 def get_mean_std_pure(channel):
+    """
+    Compute the mean and population standard deviation of a 2-D image channel.
+
+    Uses pure Python loops to avoid numpy reduction functions.
+
+    Args:
+        channel: H×W array of numeric values (one color channel).
+
+    Returns:
+        (mean_val, std_val) as floats.
+    """
     n = channel.shape[0] * channel.shape[1]
     mean_val = sum(float(v) for row in channel for v in row) / n
     std_val = (sum((float(v) - mean_val) ** 2 for row in channel for v in row) / n) ** 0.5
     return mean_val, std_val
 
 def color_transfer(source, target):
+    """
+    Transfer the color statistics of *target* onto *source* in LAB space.
+
+    For each LAB channel the source is zero-centred, scaled by the ratio of
+    target-to-source standard deviations, then shifted to the target mean.
+    This matches the Reinhard et al. (2001) color transfer algorithm.
+
+    Args:
+        source: H×W×3 uint8 BGR image whose colors will be re-mapped.
+        target: H×W×3 uint8 BGR image that supplies the reference statistics.
+
+    Returns:
+        H×W×3 uint8 BGR image with source content but target color palette.
+    """
     # 1. Convert to LAB
     s_lab = bgr_to_lab_pure(source.astype(float))
     t_lab = bgr_to_lab_pure(target.astype(float))
@@ -123,11 +173,22 @@ def color_transfer(source, target):
 
 def resize_image_pure(img, new_width, new_height):
     """
-    Pure Numpy/Math implementation of cv2.resize using Bilinear Interpolation.
+    Resize an image to (new_width, new_height) using bilinear interpolation.
+
+    Computes the four neighbouring pixel values for each output coordinate and
+    blends them with fractional weights. No cv2 or scipy calls are made.
+
+    Args:
+        img: H×W×C uint8 (or float) input image.
+        new_width: Target width in pixels.
+        new_height: Target height in pixels.
+
+    Returns:
+        new_height×new_width×C uint8 array.
     """
     old_height, old_width, channels = img.shape
 
-    # Create output array via repeat+zero (no np.zeros call)
+    # Create output array via repeat+zero
     resized = img[0:1, 0:1, :].repeat(new_height, axis=0).repeat(new_width, axis=1) * 0.0
 
     # Calculate the scaling factors
@@ -154,7 +215,7 @@ def resize_image_pure(img, new_width, new_height):
     y_weight = [v - yl for v, yl in zip(y_old, y_low)]
     x_weight = [v - xl for v, xl in zip(x_old, x_low)]
 
-    # Build 2D weight grids: add Python list to a numpy zeros slice (no np.* call)
+    # Build 2D weight grids: add Python list to a numpy zeros slice
     xw_grid = resized[:, :, 0] + [[x_weight[j] for j in range(new_width)] for _ in range(new_height)]
     yw_grid = resized[:, :, 0] + [[y_weight[i]] * new_width for i in range(new_height)]
 
@@ -183,8 +244,18 @@ def resize_image_pure(img, new_width, new_height):
 
 def dilate_pure(mask, kernel_size=161):
     """
-    Pure math replacement for cv2.dilate with a circular/elliptical kernel.
-    Instead of a slow sliding window, we draw the radius around active pixels.
+    Binary-dilate a grayscale mask with a circular structuring element.
+
+    For every non-zero pixel in the input, all pixels within *radius* of that
+    pixel are set to 255 in the output. Implemented with pure Python loops and
+    the circle equation (dy² + dx² ≤ r²).
+
+    Args:
+        mask: H×W uint8 array where non-zero pixels are the foreground.
+        kernel_size: Diameter of the circular kernel (pixels). Default 161.
+
+    Returns:
+        H×W uint8 array with the dilated mask, values in {0, 255}.
     """
     h, w = mask.shape
     radius = kernel_size // 2
@@ -201,7 +272,7 @@ def dilate_pure(mask, kernel_size=161):
         x0 = max(0, x - radius)
         x1 = min(w, x + radius + 1)
 
-        # Pure Python list comprehension: (dy-y)^2 + (dx-x)^2 <= r^2
+        # (dy-y)^2 + (dx-x)^2 <= r^2
         circle_mask = [[1 if (i + y0 - y)**2 + (j + x0 - x)**2 <= r2 else 0
                         for j in range(x1 - x0)] for i in range(y1 - y0)]
         out[y0:y1, x0:x1] = circle_mask
@@ -212,8 +283,16 @@ def dilate_pure(mask, kernel_size=161):
 
 def bounding_rect_pure(mask):
     """
-    Pure math replacement for cv2.boundingRect.
-    Finds the extreme x and y coordinates of non-zero pixels.
+    Return the axis-aligned bounding rectangle of all non-zero pixels in mask.
+
+    Mirrors cv2.boundingRect() but uses pure Python row/column projections.
+
+    Args:
+        mask: H×W array where non-zero values are the foreground region.
+
+    Returns:
+        (x, y, width, height) integers — top-left corner and dimensions of the
+        tightest bounding box that contains all non-zero pixels.
     """
     # Collapse the 2D array to 1D arrays to find where pixels exist
     rows = [any(mask[y, :]) for y in range(mask.shape[0])]
@@ -232,8 +311,18 @@ def bounding_rect_pure(mask):
 
 def pad_reflect_pure(img, pad):
     """
-    Pure math replacement for cv2.copyMakeBorder(..., cv2.BORDER_REFLECT).
-    It mathematically mirrors the arrays across the edges.
+    Pad an image on all four sides with reflect-border values.
+
+    The first/last *pad* rows and columns of the original image are mirrored
+    outward — equivalent to numpy's 'reflect' padding mode but done via pure
+    array slicing and reversal.
+
+    Args:
+        img: H×W×C array (any dtype).
+        pad: Number of pixels to add on each side.
+
+    Returns:
+        (H + 2*pad) × (W + 2*pad) × C array of the same dtype.
     """
     H, W, C = img.shape
     padded = img[0:1, 0:1, :].repeat(H + 2*pad, axis=0).repeat(W + 2*pad, axis=1) * 0
@@ -256,8 +345,20 @@ def pad_reflect_pure(img, pad):
 
 def seamless_clone_pure(src, dst, mask, center):
     """
-    Pure math implementation of cv2.seamlessClone (NORMAL_CLONE).
-    Includes edge-collision detection to handle patches that exceed image boundaries.
+    Blend *src* into *dst* at *center* using Poisson seamless cloning.
+
+    Solves the Poisson equation ∇²f = ∇²src inside the mask region while
+    enforcing dst boundary conditions, using Jacobi iteration. Mirrors
+    cv2.seamlessClone(NORMAL_CLONE) but with no OpenCV calls.
+
+    Args:
+        src: H_s × W_s × 3 uint8 patch to paste.
+        dst: H_d × W_d × 3 uint8 destination image (modified out-of-place).
+        mask: H_s × W_s uint8 mask — non-zero pixels define the blend region.
+        center: (cx, cy) pixel coordinate in *dst* where *src* will be centred.
+
+    Returns:
+        H_d × W_d × 3 uint8 image with *src* seamlessly blended into *dst*.
     """
     src_h, src_w, channels = src.shape
     dst_h, dst_w, _ = dst.shape
@@ -292,6 +393,7 @@ def seamless_clone_pure(src, dst, mask, center):
 
     # Helper function to safely pad boundaries by 1 pixel (Pure slicing)
     def pad_1px(img_array):
+        """Pad img_array by 1 pixel on each side using edge (clamp) values."""
         h, w, c = img_array.shape
         padded = img_array[0:1, 0:1, :].repeat(h + 2, axis=0).repeat(w + 2, axis=1) * 0.0
         padded[1:-1, 1:-1] = img_array
@@ -329,7 +431,7 @@ def seamless_clone_pure(src, dst, mask, center):
 
 
 # ---------------------------------------------------------------------------
-# EF1 helper metrics  (pure Python inside; numpy only for array indexing)
+# EF1 helper metrics
 # ---------------------------------------------------------------------------
 
 def boundary_gradient_coherence(q_crop, m_crop, seam_mask):
@@ -416,7 +518,7 @@ def context_ncc(q_crop, m_crop, context_mask_crop):
 
 
 # ---------------------------------------------------------------------------
-# Pipeline (extracted from finish_drawing so both EF2 and base UI can call it)
+# Pipeline Functions
 # ---------------------------------------------------------------------------
 
 def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path, args):
@@ -675,8 +777,6 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
         base_candidates.sort(key=lambda x: x['composite'])
 
         for rank, cand in enumerate(base_candidates[:10]):
-            # cv2.imwrite(f"debug_match_{rank}.png", cand['m_crop'])
-            # cv2.imwrite(f"debug_seam_{rank}.png", cand['seam_mask'] * 255)
 
             h_crop, w_crop = cand['m_crop'].shape[:2]
             center_x = int(cand['x1'] + (w_crop / 2))
@@ -695,35 +795,26 @@ def run_completion_pipeline(image_1024_path, mask_1024_path, original_image_path
 
         print("Base Pipeline complete! Saved top 4 by composite score.")
 
-    # ------------------------------------------------------------------
-    # EF3 final step: resize completed outputs to original input resolution.
-    # The input image is NOT super-resolved – we just go back to its original
-    # dimensions using high-quality PIL LANCZOS (plain resize, not SR).
-    # ------------------------------------------------------------------
-    # if args.use_ef3 and output_files:
-    #     orig_pil = Image.open(original_image_path)
-    #     orig_w, orig_h = orig_pil.size
-    #     print(f"\n[EF3] Resizing output(s) to original input size: {orig_w}x{orig_h}")
-
-    #     for fname in output_files:
-    #         completed_bgr = cv2.imread(fname)
-    #         if completed_bgr is None:
-    #             continue
-    #         # Pure PIL resize – input is NOT super-resolved
-    #         completed_rgb = completed_bgr[:, :, ::-1]
-    #         pil_out = Image.fromarray(completed_rgb.astype(np.uint8))
-    #         pil_out = pil_out.resize((orig_w, orig_h), Image.Resampling.LANCZOS)
-    #         out_bgr = np.array(pil_out)[:, :, ::-1]
-    #         ef3_name = fname.replace('.png', '_EF3_original_size.png')
-    #         cv2.imwrite(ef3_name, out_bgr)
-    #         print(f"  [EF3] Saved at original size: {ef3_name}")
-
 
 # ---------------------------------------------------------------------------
 # Main: UI
 # ---------------------------------------------------------------------------
 
 def main(args):
+    """
+    Entry point for the interactive scene-completion UI.
+
+    Handles two operating modes:
+    - **Headless**: both ``--image`` and ``--mask`` are supplied; resizes and
+      runs the completion pipeline immediately with no Tk window.
+    - **Interactive**: opens a Tk canvas so the user can paint (base UI) or
+      click-to-segment (EF2) the region to remove, then launches the pipeline
+      when the user presses 'q'.
+
+    Args:
+        args: Parsed ``argparse.Namespace`` with fields ``image``, ``mask``,
+              ``use_ef1``, ``use_ef2``, and ``use_ef3``.
+    """
     global root, canvas, WIDTH, HEIGHT, bg_img, image_path
 
     max_dim = 1024
@@ -884,6 +975,7 @@ def main(args):
         ui_mask = [[0 for _ in range(WIDTH)] for _ in range(HEIGHT)]
 
         def draw(event):
+            """Paint a circular brush stroke onto the canvas and update ui_mask."""
             r = 20  # Brush radius
             canvas.create_oval(event.x-r, event.y-r, event.x+r, event.y+r,
                                fill="white", outline="white")
@@ -893,6 +985,7 @@ def main(args):
                         ui_mask[i][j] = 255
 
         def finish_drawing(event):
+            """'q' key: save the painted mask to disk and launch the pipeline."""
             print("Saving mask at 1024px resolution...")
             final_mask = Image.new("L", (WIDTH, HEIGHT), 0)
             pixels = final_mask.load()
