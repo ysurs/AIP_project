@@ -39,12 +39,11 @@ Output Completed Image
 
 | File | Role |
 |------|------|
-| `pure_python_paint.py` | **Main entry point.** Tkinter GUI for brush-painting the hole mask; orchestrates the full pipeline. |
-| `test_image_creation.py` | GIST descriptor and color-histogram feature extraction for scene-level retrieval. |
+| `main.py` | **Main entry point.** Tkinter GUI for brush-painting the hole mask; orchestrates the full pipeline. Also contains `seamless_clone_pure` — Poisson/seamless blending via iterative Jacobi solver. |
+| `feature_extraction.py` | GIST descriptor and color-histogram feature extraction for scene-level retrieval. |
 | `match_scenes.py` | Loads/caches GIST+color features for every database image; ranks them against the query using weighted SSD. |
 | `local_context_matching.py` | Crops a "context donut" around the hole and runs masked SSD template matching at multiple scales to place each candidate. Wraps `lcm_solver.c` via ctypes. |
 | `graph_cut.py` | Builds a 4-connected pixel graph and calls the C max-flow solver to find the optimal seam mask. |
-| `pure_python_paint.py` (`seamless_clone_pure`) | Pure-numpy Poisson/seamless blending — iterative Jacobi solver applied inside the seam mask region. |
 | `ef2_segmentation.py` | SAM ViT-B wrapper for point-prompted segmentation; pure-Python mask merge/remove/overlay helpers. |
 | `super_resolve.py` | Real-ESRGAN x4plus upsampler (EF3). Loaded lazily; uses tiled inference to avoid OOM. |
 | `lcm_solver.py` | ctypes wrapper for `lcm_solver.c` — BGR→gray, BGR→LAB, morphological dilation, bilinear resize, texture map (Sobel+median), masked SSD. Auto-compiles on first import. |
@@ -151,7 +150,7 @@ python create_tiny_db.py
 
 ```bash
 conda activate aip_project
-python pure_python_paint.py
+python main.py
 ```
 
 Opens a file dialog to pick an image, then a Tkinter canvas for painting the hole mask.
@@ -159,23 +158,23 @@ Opens a file dialog to pick an image, then a Tkinter canvas for painting the hol
 ### Headless mode (supply image + mask directly)
 
 ```bash
-python pure_python_paint.py --image image_1024.png --mask mask_1024.png
+python main.py --image image_1024.png --mask mask_1024.png
 ```
 
 ### With enhancement flags
 
 ```bash
 # EF1: automatic candidate ranking by seam energy
-python pure_python_paint.py --image image_1024.png --mask mask_1024.png --use_ef1
+python main.py --image image_1024.png --mask mask_1024.png --use_ef1
 
 # EF2: SAM click-to-segment mask interface
-python pure_python_paint.py --image image_1024.png --use_ef2
+python main.py --image image_1024.png --use_ef2
 
 # EF3: tiny-DB matching + super-resolution output
-python pure_python_paint.py --image image_1024.png --mask mask_1024.png --use_ef3
+python main.py --image image_1024.png --mask mask_1024.png --use_ef3
 
 # All flags together
-python pure_python_paint.py --image image_1024.png --mask mask_1024.png --use_ef1 --use_ef2 --use_ef3
+python main.py --image image_1024.png --mask mask_1024.png --use_ef1 --use_ef2 --use_ef3
 ```
 
 ### Scene matching only (standalone)
