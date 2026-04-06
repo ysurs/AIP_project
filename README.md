@@ -31,7 +31,7 @@ Output Completed Image
 |------|-----------|-------------|
 | `--use_ef1` | EF1 — Auto Ranking | Re-ranks candidates using seam energy (min-cut cost) from LCM; picks the best composite automatically |
 | `--use_ef2` | EF2 — SAM Segmentation | Replaces the hand-drawn mask UI with a click-to-segment interface backed by Meta's Segment Anything Model (SAM ViT-B) |
-| `--use_ef3` | EF3 — Super Resolution | Matches against a compact "tiny" database and upscales the final result 4× using Real-ESRGAN x4plus |
+| `--use_ef3` | EF3 — Super Resolution | Matches against a compact "tiny" database; super-resolves each matched candidate image up to query resolution using Real-ESRGAN x4plus before blending |
 
 ---
 
@@ -175,6 +175,8 @@ Opens a file dialog to pick an image, then a Tkinter canvas for painting the hol
 
 ### Headless mode (supply image + mask directly)
 
+> Requires `image_1024.png` and `mask_1024.png` to already exist in the project root — these are generated automatically the first time you run the interactive mode above.
+
 ```bash
 python main.py --image image_1024.png --mask mask_1024.png
 ```
@@ -191,18 +193,19 @@ python main.py --image image_1024.png --use_ef2
 # EF3: tiny-DB matching + super-resolution output
 python main.py --image image_1024.png --mask mask_1024.png --use_ef3
 
-# All flags together
-python main.py --image image_1024.png --mask mask_1024.png --use_ef1 --use_ef2 --use_ef3
 ```
 
-### Scene matching only (standalone)
-
-```bash
-python match_scenes.py --query image_1024.png --mask mask_1024.png --db skyline_1024 --k 10
-```
 
 ---
 
 ## Output
 
-Completed images are saved as `final_completed_image_*.png` in the project root.
+All output files are written to the project root directory. The filenames depend on which flags are active:
+
+| Mode | Output filename(s) |
+|------|--------------------|
+| Base pipeline (no flags) | `final_completed_image_0.png` … `final_completed_image_9.png` |
+| `--use_ef1` | `final_completed_image_EF1_BEST.png` |
+| `--use_ef3` | `final_completed_image_0.png` … `final_completed_image_9.png` |
+
+> EF3 component outputs the same file names as there is code reuse happening between EF3 and base component
