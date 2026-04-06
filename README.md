@@ -132,7 +132,25 @@ gcc -O3 -shared -fPIC -o graph_cut_solver.so graph_cut_solver.c
 
 ---
 
+## Dataset
+
+The image databases (`skyline_1024/` and `skyline_tiny/`) are hosted on Hugging Face:
+**[https://huggingface.co/datasets/YashS/Skyline](https://huggingface.co/datasets/YashS/Skyline)**
+
+### Download the dataset
+
+```bash
+pip install huggingface_hub
+python download_data.py
+```
+
+This will download and place `skyline_1024/` and `skyline_tiny/` in the project root, ready to use.
+
+---
+
 ## Preparing the Image Database
+
+> If you downloaded the dataset using `download_data.py` above, you can skip this step — the folders are already prepared.
 
 ```bash
 # Flatten a multi-city dataset into skyline_1024/
