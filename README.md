@@ -206,6 +206,7 @@ All output files are written to the project root directory. The filenames depend
 |------|--------------------|
 | Base pipeline (no flags) | `final_completed_image_0.png` … `final_completed_image_9.png` |
 | `--use_ef1` | `final_completed_image_EF1_BEST.png` |
+| `--use_ef2` | `final_completed_image_0.png` … `final_completed_image_9.png` |
 | `--use_ef3` | `final_completed_image_0.png` … `final_completed_image_9.png` |
 
-> EF3 component outputs the same file names as there is code reuse happening between EF3 and base component
+> EF2,EF3 component outputs the same file names as there is code reuse happening between EF2,EF3 and base component
